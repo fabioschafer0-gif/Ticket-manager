@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ObjektPilot Team – Ticket-Verwaltung</title>
+<style>
+  :root{
+    --bg:#0D1B2A; --surface:#122030; --card:#162840; --border:#1E3A58;
+    --text:#E2E8F0; --muted:#64748B; --soft:#94A3B8; --accent:#F97316;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,system-ui,sans-serif;
+    background:var(--bg); color:var(--text); overflow:hidden;
+  }
+  #app{display:flex; height:100vh;}
+
+  /* ===== Sidebar ===== */
+  .sidebar{
+    width:220px; min-width:220px; background:var(--surface);
+    border-right:1px solid var(--border); display:flex; flex-direction:column;
+    padding-bottom:16px; overflow:hidden; transition:width .2s ease, min-width .2s ease;
+    position:relative;
+  }
+  .sidebar.collapsed{width:60px; min-width:60px;}
+  .logo-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 14px; border-bottom:1px solid var(--border); margin-bottom:12px;
+  }
+  .sidebar.collapsed .logo-row{justify-content:center; padding:18px 0;}
+  .logo-text{font-weight:800; font-size:16px; letter-spacing:-.5px;}
+  .logo-text span{color:var(--accent);}
+  .collapse-btn{
+    background:transparent; border:1px solid var(--border); color:var(--muted);
+    border-radius:6px; cursor:pointer; padding:5px 9px; font-size:13px;
+  }
+  .collapse-btn.fixed-expand{
+    position:fixed; left:52px; top:18px; z-index:20; background:var(--surface);
+  }
+  .quick-stats{padding:0 14px 12px; border-bottom:1px solid var(--border); margin-bottom:8px;}
+  .urgent-banner{
+    background:#7F1D1D; color:#FCA5A5; border-radius:6px; padding:5px 8px;
+    font-size:12px; font-weight:700; margin-bottom:8px; text-align:center;
+  }
+  .stat-row{display:flex; justify-content:space-between; padding:3px 0; font-size:13px;}
+  .stat-row span:first-child{color:var(--muted);}
+  .nav-item{
+    display:flex; align-items:center; gap:10px; padding:11px 14px;
+    background:transparent; border:none; border-left:3px solid transparent;
+    color:var(--muted); cursor:pointer; width:100%; text-align:left;
+    font-size:14px; font-weight:500; transition:all .15s; font-family:inherit;
+  }
+  .sidebar.collapsed .nav-item{justify-content:center; padding:12px 0;}
+  .nav-item .icon{font-size:18px; flex-shrink:0;}
+  .nav-item.active{background:rgba(249,115,22,.12); border-left-color:var(--accent); color:var(--accent);}
+  .sidebar-footer{margin-top:auto; padding:10px 14px 0; border-top:1px solid var(--border);}
+  .gh-status{font-size:11px; color:var(--muted); margin-bottom:8px; word-break:break-all;}
+  .gh-status strong{color:var(--soft);}
+
+  /* ===== Main ===== */
+  main{flex:1; overflow:auto; background:var(--bg);}
+  .container{max-width:900px; margin:0 auto; padding:28px 24px;}
+  h1{font-size:22px; font-weight:800; margin:0;}
+  h2.section-title{
+    font-size:14px; font-weight:700; color:var(--soft); letter-spacing:1px;
+    text-transform:uppercase; margin:0 0 12px;
+  }
+  .row-between{display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:10px;}
+
+  /* ===== Buttons ===== */
+  .btn{
+    border:none; border-radius:8px; padding:9px 16px; font-size:13px; font-weight:600;
+    cursor:pointer; display:inline-flex; align-items:center; gap:6px;
+    transition:opacity .15s; font-family:inherit;
+  }
+  .btn:disabled{opacity:.6; cursor:not-allowed;}
+  .btn-primary{background:var(--accent); color:#fff;}
+  .btn-secondary{background:transparent; color:var(--soft); border:1px solid var(--border);}
+  .btn-danger{background:#7F1D1D; color:#FCA5A5;}
+  .btn-ghost{background:transparent; color:var(--muted); padding:6px 10px;}
+  .spin{display:inline-block; animation:spin 0.9s linear infinite;}
+  @keyframes spin{ from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+
+  /* ===== Inputs ===== */
+  .input, select.input, textarea.input{
+    width:100%; background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; padding:9px 12px; color:var(--text); font-size:14px;
+    outline:none; font-family:inherit;
+  }
+  .input.err{border-color:#EF4444;}
+  .input:focus{border-color:var(--accent);}
+  textarea.input{min-height:88px; resize:vertical; line-height:1.5;}
+  .field{margin-bottom:14px;}
+  .field-label{
+    display:block; color:var(--soft); font-size:12px; font-weight:600;
+    margin-bottom:6px; letter-spacing:.5px; text-transform:uppercase;
+  }
+  .field-error{color:#EF4444; font-size:12px; margin-top:5px;}
+  .field-hint{color:var(--muted); font-size:12px; margin-top:5px; line-height:1.4;}
+
+  /* ===== Pills ===== */
+  .pill{
+    display:inline-flex; align-items:center; gap:4px; padding:2px 9px;
+    border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.3px;
+  }
+
+  /* ===== Stat cards ===== */
+  .stat-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:12px; margin-bottom:28px;}
+  .stat-card{
+    background:var(--card); border-radius:10px; padding:16px 14px; border:1px solid var(--border);
+    cursor:pointer; transition:transform .15s;
+  }
+  .stat-card:hover{transform:translateY(-2px);}
+  .stat-icon{font-size:22px; margin-bottom:8px;}
+  .stat-value{font-size:28px; font-weight:800; line-height:1;}
+  .stat-label{font-size:12px; color:var(--muted); margin-top:4px;}
+
+  /* ===== Category grid ===== */
+  .cat-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(155px,1fr)); gap:10px; margin-bottom:28px;}
+  .cat-card{
+    background:var(--card); border-radius:8px; padding:12px 14px; border:1px solid var(--border);
+    display:flex; align-items:center; cursor:pointer; transition:transform .15s;
+  }
+  .cat-card:hover{transform:translateY(-2px);}
+  .cat-emoji{font-size:22px;}
+  .cat-name{color:var(--text); font-weight:600; font-size:13px;}
+  .cat-count{font-size:22px; font-weight:800; line-height:1.2;}
+  .cat-suffix{color:var(--muted); font-size:11px;}
+
+  /* ===== Ticket rows ===== */
+  .ticket-row{
+    background:var(--card); border-radius:8px; border:1px solid var(--border);
+    padding:13px 16px; margin-bottom:8px; cursor:pointer; display:flex;
+    align-items:flex-start; gap:12px; transition:border-color .15s;
+  }
+  .ticket-row:hover{border-color:var(--accent);}
+  .ticket-emoji{font-size:20px; line-height:1.5; flex-shrink:0;}
+  .ticket-title-row{display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:5px;}
+  .ticket-title{font-weight:700; color:var(--text); font-size:14px;}
+  .ticket-desc{color:var(--muted); font-size:13px; margin-bottom:6px; line-height:1.4; max-height:38px; overflow:hidden;}
+  .ticket-meta{display:flex; gap:14px; flex-wrap:wrap; color:var(--muted); font-size:12px;}
+  .ticket-meta .spacer{margin-left:auto;}
+
+  /* ===== Filter bar ===== */
+  .filter-bar{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .filter-bar .input{max-width:200px; width:auto;}
+  .result-count{color:var(--muted); font-size:13px; margin-bottom:12px; display:flex; align-items:center; gap:8px;}
+
+  /* ===== Empty state ===== */
+  .empty-state{text-align:center; padding:56px 24px; color:var(--muted);}
+  .empty-icon{font-size:48px; margin-bottom:14px;}
+  .empty-title{font-size:17px; font-weight:700; color:var(--text); margin-bottom:8px;}
+  .empty-text{font-size:14px; margin-bottom:22px;}
+
+  /* ===== Create form ===== */
+  .form-card{background:var(--card); border-radius:12px; border:1px solid var(--border); padding:24px;}
+  .form-grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  .info-box{
+    background:var(--surface); border-radius:8px; border:1px solid var(--border);
+    padding:10px 14px; font-size:13px; color:var(--muted); margin-top:4px;
+  }
+  .info-box strong{color:var(--text);}
+  .form-actions{display:flex; gap:10px; justify-content:flex-end; margin-top:20px;}
+
+  /* ===== Detail view ===== */
+  .detail-card{background:var(--card); border-radius:12px; border:1px solid var(--border); overflow:hidden;}
+  .detail-colorbar{height:5px;}
+  .detail-body{padding:24px;}
+  .detail-badges{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
+  .detail-title{font-size:20px; font-weight:800; margin:0 0 12px; line-height:1.3;}
+  .detail-desc{color:var(--soft); line-height:1.7; margin-bottom:22px; font-size:14px; white-space:pre-wrap;}
+  .meta-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:10px; margin-bottom:24px;}
+  .meta-item{background:var(--surface); border-radius:8px; padding:10px 12px; border:1px solid var(--border);}
+  .meta-item-label{color:var(--muted); font-size:11px; margin-bottom:4px;}
+  .meta-item-value{color:var(--text); font-weight:600; font-size:13px;}
+  .status-section{border-top:1px solid var(--border); padding-top:20px;}
+  .status-label{color:var(--muted); font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom:12px;}
+  .status-btn{
+    padding:9px 18px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:700;
+    transition:all .15s; background:transparent; font-family:inherit;
+  }
+  .status-btn:disabled{opacity:.5; cursor:not-allowed;}
+  .gh-link{color:var(--accent); font-size:12px; text-decoration:none; font-weight:600;}
+  .gh-link:hover{text-decoration:underline;}
+
+  /* ===== Toast ===== */
+  #toast{
+    position:fixed; bottom:24px; right:24px; padding:12px 20px; border-radius:10px;
+    color:white; font-size:14px; font-weight:600; z-index:1000;
+    box-shadow:0 6px 24px rgba(0,0,0,.5); display:none; max-width:340px;
+  }
+  #toast.show{display:block;}
+  #toast.ok{background:#14532D; border:1px solid #22C55E;}
+  #toast.err{background:#7F1D1D; border:1px solid #EF4444;}
+
+  /* ===== Error banner ===== */
+  #errorBanner{
+    display:none; background:#7F1D1D; color:#FCA5A5; padding:10px 24px;
+    font-size:13px; text-align:center; font-weight:600;
+  }
+  #errorBanner.show{display:block;}
+  #errorBanner button{margin-left:10px; background:transparent; border:1px solid #FCA5A5; color:#FCA5A5; border-radius:5px; padding:2px 9px; cursor:pointer; font-size:12px;}
+
+  /* ===== Modal ===== */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,.72); display:none;
+    align-items:center; justify-content:center; z-index:900; padding:20px;
+  }
+  .modal-overlay.show{display:flex;}
+  .modal{
+    background:var(--card); border-radius:14px; border:1px solid var(--border);
+    padding:32px; max-width:370px; width:100%; text-align:center;
+  }
+  .modal.wide{max-width:440px; text-align:left;}
+  .modal-icon{font-size:40px; margin-bottom:12px;}
+  .modal h2{color:var(--text); margin:0 0 10px; font-size:18px;}
+  .modal p{color:var(--muted); font-size:14px; margin-bottom:26px; line-height:1.5;}
+  .modal-actions{display:flex; gap:10px; justify-content:center;}
+  .modal-actions.left{justify-content:flex-end;}
+
+  /* ===== Loading / Setup screens ===== */
+  #loadingScreen, #setupScreen{
+    display:flex; align-items:center; justify-content:center; height:100vh;
+    background:var(--bg); position:fixed; inset:0; z-index:2000; padding:20px;
+  }
+  #loadingScreen{display:none;}
+  #setupScreen{display:none;}
+  .setup-box{text-align:center; max-width:440px; width:100%;}
+  .setup-box .emoji{font-size:44px;}
+  .setup-box h1{font-size:22px; margin:14px 0 6px;}
+  .setup-box .sub{color:var(--muted); font-size:14px; margin-bottom:24px; line-height:1.5;}
+  .setup-card{background:var(--card); border-radius:14px; border:1px solid var(--border); padding:26px; text-align:left;}
+  #loadingScreen .box{text-align:center;}
+  #loadingScreen .emoji{font-size:44px;}
+  #loadingScreen p{color:var(--muted); margin-top:14px; font-size:15px;}
+
+  /* scrollbar */
+  ::-webkit-scrollbar{width:10px;}
+  ::-webkit-scrollbar-track{background:var(--bg);}
+  ::-webkit-scrollbar-thumb{background:var(--border); border-radius:5px;}
+
+  @media (max-width:680px){
+    .sidebar{position:fixed; z-index:50; height:100vh;}
+    .form-grid2{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<div id="loadingScreen">
+  <div class="box">
+    <div class="emoji">🏢</div>
+    <p id="loadingText">ObjektPilot wird geladen…</p>
+  </div>
+</div>
+
+<div id="setupScreen">
+  <div class="setup-box">
+    <div class="emoji">🔗</div>
+    <h1>Mit GitHub verbinden</h1>
+    <div class="sub">Tickets werden als GitHub Issues in eurem Repository gespeichert, damit alle Teammitglieder dieselben Daten sehen.</div>
+    <div class="setup-card" id="setupCard"></div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+  <nav class="sidebar" id="sidebar"></nav>
+  <main>
+    <div id="errorBanner"></div>
+    <div class="container" id="mainContainer"></div>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<div class="modal-overlay" id="confirmOverlay">
+  <div class="modal">
+    <div class="modal-icon">🗑️</div>
+    <h2>Ticket entfernen?</h2>
+    <p>Das zugehörige GitHub-Issue wird geschlossen und aus dieser App ausgeblendet. Eine endgültige Löschung ist über die GitHub-API nicht möglich — bei Bedarf kannst du das Issue manuell auf github.com vollständig löschen.</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="App.cancelDelete()">Abbrechen</button>
+      <button class="btn btn-danger" onclick="App.confirmDelete()">Entfernen</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="settingsOverlay">
+  <div class="modal wide" id="settingsModalBody"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ═══════════════════════════════════════════
+     CONFIG / CONSTANTS
+  ═══════════════════════════════════════════ */
+  var CONFIG_KEY = "objektpilot-github-config-v1";
+  var GITHUB_API = "https://api.github.com";
+  var DELETED_LABEL = "geloescht";
+  var INPROGRESS_LABEL = "status:in-bearbeitung";
+  var AUTO_REFRESH_MS = 30000;
+
+  var CATEGORIES = {
+    reparatur:   { label: "Reparatur",          emoji: "🔧", color: "#EF4444" },
+    kauf:        { label: "Kauf / Bestellung",  emoji: "🛒", color: "#F97316" },
+    renovierung: { label: "Renovierung",        emoji: "🏗️", color: "#8B5CF6" },
+    reinigung:   { label: "Reinigung",          emoji: "🧹", color: "#06B6D4" },
+    sonstiges:   { label: "Sonstiges",          emoji: "📋", color: "#64748B" }
+  };
+  var PRIORITIES = {
+    niedrig:  { label: "Niedrig",  color: "#22C55E" },
+    mittel:   { label: "Mittel",   color: "#EAB308" },
+    hoch:     { label: "Hoch",     color: "#F97316" },
+    dringend: { label: "Dringend", color: "#EF4444" }
+  };
+  var STATUSES = {
+    offen:          { label: "Offen",          color: "#3B82F6" },
+    in_bearbeitung: { label: "In Bearbeitung", color: "#EAB308" },
+    erledigt:       { label: "Erledigt",       color: "#22C55E" }
+  };
+  var CATEGORY_KEYS = Object.keys(CATEGORIES);
+  var PRIORITY_KEYS = Object.keys(PRIORITIES);
+  var STATUS_KEYS   = Object.keys(STATUSES);
+
+  /* ═══════════════════════════════════════════
+     GENERAL HELPERS
+  ═══════════════════════════════════════════ */
+  function escapeHtml(str){
+    if (str == null) return "";
+    return String(str)
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+  }
+  function fmtDT(iso){
+    if (!iso) return "–";
+    try{ var d=new Date(iso); if(isNaN(d.getTime())) return "–";
+      return d.toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    }catch(e){ return "–"; }
+  }
+  function fmtD(iso){
+    if (!iso) return "–";
+    try{ var d=new Date(iso); if(isNaN(d.getTime())) return "–";
+      return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric"});
+    }catch(e){ return "–"; }
+  }
+  function timeAgo(iso){
+    if (!iso) return "";
+    try{
+      var diff=Date.now()-new Date(iso).getTime();
+      var mins=Math.floor(diff/60000);
+      if (mins<1) return "Gerade eben";
+      if (mins<60) return "vor "+mins+" Min.";
+      var hrs=Math.floor(mins/60);
+      if (hrs<24) return "vor "+hrs+" Std.";
+      var days=Math.floor(hrs/24);
+      return "vor "+days+" Tag"+(days!==1?"en":"");
+    }catch(e){ return ""; }
+  }
+
+  /* ═══════════════════════════════════════════
+     LOCAL CONFIG STORAGE (per-device connection settings)
+  ═══════════════════════════════════════════ */
+  function loadConfig(){
+    try{
+      var raw = window.localStorage.getItem(CONFIG_KEY);
+      if (!raw) return null;
+      var cfg = JSON.parse(raw);
+      if (!cfg || !cfg.owner || !cfg.repo || !cfg.token) return null;
+      return cfg;
+    }catch(e){ return null; }
+  }
+  function saveConfigToStorage(cfg){
+    try{ window.localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)); return true; }
+    catch(e){ return false; }
+  }
+  function clearConfigFromStorage(){
+    try{ window.localStorage.removeItem(CONFIG_KEY); }catch(e){}
+  }
+
+  var config = null; // {owner, repo, token}
+
+  /* ═══════════════════════════════════════════
+     GITHUB API LAYER
+  ═══════════════════════════════════════════ */
+  function ghHeaders(token){
+    return {
+      "Authorization": "Bearer " + token,
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json"
+    };
+  }
+
+  function friendlyErrorMessage(status){
+    if (status === 401) return "Ungültiges Token. Bitte in den Einstellungen prüfen.";
+    if (status === 403) return "Zugriff verweigert – Rate-Limit erreicht oder Token ohne ausreichende Berechtigung.";
+    if (status === 404) return "Repository nicht gefunden. Prüfe Besitzer- und Repo-Namen.";
+    if (status === 410) return "Issues sind für dieses Repository deaktiviert.";
+    if (status === 422) return "Ungültige Anfrage – GitHub hat die Daten abgelehnt.";
+    return "Unbekannter Fehler (Status " + status + ").";
+  }
+
+  function getNextPageUrl(linkHeader){
+    if (!linkHeader) return null;
+    var parts = linkHeader.split(",");
+    for (var i=0;i<parts.length;i++){
+      var m = parts[i].match(/<([^>]+)>;\s*rel="next"/);
+      if (m) return m[1];
+    }
+    return null;
+  }
+
+  async function testConnection(cfg){
+    try{
+      var res = await fetch(GITHUB_API + "/repos/" + encodeURIComponent(cfg.owner) + "/" + encodeURIComponent(cfg.repo), { headers: ghHeaders(cfg.token) });
+      if (!res.ok){
+        return { ok:false, message: friendlyErrorMessage(res.status) };
+      }
+      var data = await res.json();
+      if (data.has_issues === false){
+        return { ok:false, message: "Issues sind für dieses Repository deaktiviert. Aktiviere sie unter Repo-Einstellungen → Features → Issues." };
+      }
+      return { ok:true };
+    }catch(e){
+      return { ok:false, message:"Keine Verbindung zu GitHub möglich. Prüfe deine Internetverbindung." };
+    }
+  }
+
+  async function ghRequest(method, path, body){
+    var url = GITHUB_API + path;
+    var opts = { method: method, headers: ghHeaders(config.token) };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    var res;
+    try{
+      res = await fetch(url, opts);
+    }catch(networkErr){
+      throw { message: "Keine Verbindung zu GitHub möglich. Prüfe deine Internetverbindung." };
+    }
+    if (!res.ok){
+      throw { status: res.status, message: friendlyErrorMessage(res.status) };
+    }
+    return res;
+  }
+
+  async function fetchAllIssuesRaw(){
+    var url = GITHUB_API + "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues?state=all&per_page=100&sort=created&direction=desc";
+    var all = [];
+    var guard = 0;
+    while (url && guard < 10){
+      var res;
+      try{
+        res = await fetch(url, { headers: ghHeaders(config.token) });
+      }catch(e){
+        throw { message: "Keine Verbindung zu GitHub möglich. Prüfe deine Internetverbindung." };
+      }
+      if (!res.ok){
+        throw { status: res.status, message: friendlyErrorMessage(res.status) };
+      }
+      var page = await res.json();
+      all = all.concat(page);
+      url = getNextPageUrl(res.headers.get("Link"));
+      guard++;
+    }
+    return all;
+  }
+
+  function buildBody(description, ort, verantwortlich){
+    var body = (description || "").trim();
+    var metaLines = [];
+    if (ort) metaLines.push("📍 **Ort:** " + ort);
+    if (verantwortlich) metaLines.push("👤 **Verantwortlich:** " + verantwortlich);
+    if (metaLines.length){
+      body += (body ? "\n\n---\n" : "---\n") + metaLines.join("\n");
+    }
+    return body;
+  }
+
+  function parseBody(body){
+    body = body || "";
+    var idx = body.indexOf("\n---\n");
+    var description, meta;
+    if (idx === -1){
+      if (body.indexOf("---\n") === 0){ description=""; meta=body.slice(4); }
+      else { description = body.trim(); meta = ""; }
+    } else {
+      description = body.slice(0, idx).trim();
+      meta = body.slice(idx + 5);
+    }
+    var ort = "", verantwortlich = "";
+    var ortMatch = meta.match(/📍\s*\*\*Ort:\*\*\s*(.+)/);
+    var vMatch = meta.match(/👤\s*\*\*Verantwortlich:\*\*\s*(.+)/);
+    if (ortMatch) ort = ortMatch[1].trim();
+    if (vMatch) verantwortlich = vMatch[1].trim();
+    return { description: description, ort: ort, verantwortlich: verantwortlich };
+  }
+
+  function labelNames(issue){
+    return (issue.labels || []).map(function(l){ return typeof l === "string" ? l : l.name; });
+  }
+
+  function issueToTicket(issue){
+    var labels = labelNames(issue);
+    var category = "sonstiges", priority = "mittel";
+    labels.forEach(function(l){
+      if (l.indexOf("kategorie:") === 0){
+        var v = l.slice(10);
+        if (CATEGORY_KEYS.indexOf(v) !== -1) category = v;
+      } else if (l.indexOf("prioritaet:") === 0){
+        var v2 = l.slice(11);
+        if (PRIORITY_KEYS.indexOf(v2) !== -1) priority = v2;
+      }
+    });
+    var status;
+    if (issue.state === "closed") status = "erledigt";
+    else if (labels.indexOf(INPROGRESS_LABEL) !== -1) status = "in_bearbeitung";
+    else status = "offen";
+
+    var parsed = parseBody(issue.body);
+
+    return {
+      id: String(issue.number),
+      number: issue.number,
+      title: issue.title || "(ohne Titel)",
+      description: parsed.description,
+      ort: parsed.ort,
+      verantwortlich: parsed.verantwortlich,
+      category: category,
+      priority: priority,
+      status: status,
+      createdAt: issue.created_at,
+      updatedAt: issue.updated_at,
+      author: issue.user ? issue.user.login : "",
+      htmlUrl: issue.html_url,
+      isDeleted: labels.indexOf(DELETED_LABEL) !== -1
+    };
+  }
+
+  async function fetchTicketsFromGitHub(){
+    var raw = await fetchAllIssuesRaw();
+    return raw
+      .filter(function(issue){ return !issue.pull_request; })
+      .map(issueToTicket)
+      .filter(function(t){ return !t.isDeleted; })
+      .sort(function(a,b){ return new Date(b.createdAt) - new Date(a.createdAt); });
+  }
+
+  async function createTicketOnGitHub(formData){
+    var labels = ["kategorie:" + formData.category, "prioritaet:" + formData.priority];
+    var body = buildBody(formData.description, formData.ort, formData.verantwortlich);
+    var res = await ghRequest("POST", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues", {
+      title: formData.title, body: body, labels: labels
+    });
+    var issue = await res.json();
+    return issueToTicket(issue);
+  }
+
+  async function updateTicketStatusOnGitHub(ticket, newStatus){
+    var labels = ["kategorie:" + ticket.category, "prioritaet:" + ticket.priority];
+    if (newStatus === "in_bearbeitung") labels.push(INPROGRESS_LABEL);
+    var state = newStatus === "erledigt" ? "closed" : "open";
+    var res = await ghRequest("PATCH", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues/" + ticket.number, {
+      state: state, labels: labels
+    });
+    var issue = await res.json();
+    return issueToTicket(issue);
+  }
+
+  async function softDeleteTicketOnGitHub(ticket){
+    var labels = ["kategorie:" + ticket.category, "prioritaet:" + ticket.priority, DELETED_LABEL];
+    await ghRequest("PATCH", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues/" + ticket.number, {
+      state: "closed", labels: labels
+    });
+    return true;
+  }
+
+  /* ═══════════════════════════════════════════
+     STATE
+  ═══════════════════════════════════════════ */
+  var state = {
+    tickets: [],
+    view: "dashboard",
+    activeId: null,
+    collapsed: false,
+    confirmId: null,
+    error: null,
+    refreshing: false
+  };
+  var filters = { status: "all", category: "all", priority: "all" };
+  var searchTerm = "";
+  var toastTimer = null;
+  var formErrors = {};
+  var formDraft = null;
+  var saving = false;
+  var statusUpdating = {};
+  var settingsOpen = false;
+  var settingsErrors = {};
+  var settingsTesting = false;
+  var setupErrors = {};
+  var setupTesting = false;
+  var autoRefreshTimer = null;
+
+  /* ═══════════════════════════════════════════
+     TOAST / ERROR BANNER
+  ═══════════════════════════════════════════ */
+  function notify(msg, type){
+    var el = document.getElementById("toast");
+    clearTimeout(toastTimer);
+    el.textContent = (type === "err" ? "❌ " : "✅ ") + msg;
+    el.className = "show " + (type === "err" ? "err" : "ok");
+    toastTimer = setTimeout(function(){ el.classList.remove("show"); }, 4200);
+  }
+
+  function renderErrorBanner(){
+    var el = document.getElementById("errorBanner");
+    if (state.error){
+      el.innerHTML = "⚠ " + escapeHtml(state.error) + ' <button onclick="App.dismissError()">Ausblenden</button> <button onclick="App.manualRefresh()">Erneut versuchen</button>';
+      el.classList.add("show");
+    } else {
+      el.classList.remove("show");
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     DERIVED DATA
+  ═══════════════════════════════════════════ */
+  function getStats(){
+    var t = state.tickets;
+    return {
+      total: t.length,
+      offen: t.filter(function(x){return x.status==="offen";}).length,
+      in_bearbeitung: t.filter(function(x){return x.status==="in_bearbeitung";}).length,
+      erledigt: t.filter(function(x){return x.status==="erledigt";}).length,
+      dringend: t.filter(function(x){return x.priority==="dringend" && x.status!=="erledigt";}).length
+    };
+  }
+  function sortedByDateDesc(arr){
+    return arr.slice().sort(function(a,b){ return new Date(b.createdAt)-new Date(a.createdAt); });
+  }
+  function getFilteredTickets(){
+    var q = searchTerm.toLowerCase();
+    return sortedByDateDesc(state.tickets.filter(function(t){
+      if (filters.status!=="all" && t.status!==filters.status) return false;
+      if (filters.category!=="all" && t.category!==filters.category) return false;
+      if (filters.priority!=="all" && t.priority!==filters.priority) return false;
+      if (q){
+        var hay=(t.title+" "+(t.description||"")+" "+(t.ort||"")).toLowerCase();
+        if (hay.indexOf(q)===-1) return false;
+      }
+      return true;
+    }));
+  }
+  function isFiltered(){
+    return filters.status!=="all"||filters.category!=="all"||filters.priority!=="all"||!!searchTerm;
+  }
+
+  function pillHtml(label, color){
+    return '<span class="pill" style="background:'+color+'20;color:'+color+';border:1px solid '+color+'44;">'+escapeHtml(label)+'</span>';
+  }
+
+  /* ═══════════════════════════════════════════
+     SETUP SCREEN
+  ═══════════════════════════════════════════ */
+  function renderSetup(){
+    var html = "";
+    if (setupErrors.general){
+      html += '<div class="field-error" style="margin-bottom:14px;background:#7F1D1D;color:#FCA5A5;padding:10px 12px;border-radius:8px;">⚠ '+escapeHtml(setupErrors.general)+'</div>';
+    }
+    html += '<div class="field"><label class="field-label">GitHub-Benutzername oder Organisation *</label>';
+    html += '<input type="text" class="input'+(setupErrors.owner?' err':'')+'" id="su_owner" placeholder="z.B. mein-account" autocomplete="off">';
+    if (setupErrors.owner) html += '<div class="field-error">⚠ '+escapeHtml(setupErrors.owner)+'</div>';
+    html += '</div>';
+
+    html += '<div class="field"><label class="field-label">Repository-Name *</label>';
+    html += '<input type="text" class="input'+(setupErrors.repo?' err':'')+'" id="su_repo" placeholder="z.B. objekt-tickets" autocomplete="off">';
+    if (setupErrors.repo) html += '<div class="field-error">⚠ '+escapeHtml(setupErrors.repo)+'</div>';
+    html += '</div>';
+
+    html += '<div class="field"><label class="field-label">Personal Access Token *</label>';
+    html += '<input type="password" class="input'+(setupErrors.token?' err':'')+'" id="su_token" placeholder="ghp_… oder github_pat_…" autocomplete="off">';
+    if (setupErrors.token) html += '<div class="field-error">⚠ '+escapeHtml(setupErrors.token)+'</div>';
+    html += '<div class="field-hint">Erstelle ein <strong>Fine-grained Token</strong> unter github.com → Settings → Developer settings → Personal access tokens. Beschränke es auf dieses eine Repository mit der Berechtigung „Issues: Read and write". Das Token bleibt ausschließlich in deinem Browser gespeichert.</div>';
+    html += '</div>';
+
+    html += '<button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px;" onclick="App.saveSetup()" '+(setupTesting?'disabled':'')+'>';
+    html += setupTesting ? '<span class="spin">⏳</span> Verbindung wird geprüft…' : '🔗 Verbinden';
+    html += '</button>';
+
+    document.getElementById("setupCard").innerHTML = html;
+  }
+
+  /* ═══════════════════════════════════════════
+     SETTINGS MODAL
+  ═══════════════════════════════════════════ */
+  function renderSettingsModal(){
+    var html = "";
+    html += '<h2 style="margin-bottom:4px;">⚙ GitHub-Verbindung</h2>';
+    html += '<p style="margin-bottom:18px;">Ändere die Repository-Verbindung oder trenne sie.</p>';
+
+    if (settingsErrors.general){
+      html += '<div class="field-error" style="margin-bottom:14px;background:#7F1D1D;color:#FCA5A5;padding:10px 12px;border-radius:8px;">⚠ '+escapeHtml(settingsErrors.general)+'</div>';
+    }
+
+    html += '<div class="field"><label class="field-label">GitHub-Benutzername / Organisation</label>';
+    html += '<input type="text" class="input'+(settingsErrors.owner?' err':'')+'" id="st_owner" value="'+escapeHtml(config?config.owner:"")+'">';
+    html += '</div>';
+    html += '<div class="field"><label class="field-label">Repository-Name</label>';
+    html += '<input type="text" class="input'+(settingsErrors.repo?' err':'')+'" id="st_repo" value="'+escapeHtml(config?config.repo:"")+'">';
+    html += '</div>';
+    html += '<div class="field"><label class="field-label">Personal Access Token</label>';
+    html += '<input type="password" class="input'+(settingsErrors.token?' err':'')+'" id="st_token" value="'+escapeHtml(config?config.token:"")+'">';
+    html += '</div>';
+
+    html += '<div class="modal-actions left" style="margin-top:18px;">';
+    html += '<button class="btn btn-danger" onclick="App.disconnectGitHub()">Verbindung trennen</button>';
+    html += '<button class="btn btn-secondary" onclick="App.closeSettings()">Abbrechen</button>';
+    html += '<button class="btn btn-primary" onclick="App.saveSettings()" '+(settingsTesting?'disabled':'')+'>'+(settingsTesting?'Prüfe…':'Speichern')+'</button>';
+    html += '</div>';
+
+    document.getElementById("settingsModalBody").innerHTML = html;
+  }
+
+  /* ═══════════════════════════════════════════
+     SIDEBAR
+  ═══════════════════════════════════════════ */
+  function renderSidebar(){
+    var s = getStats();
+    var collapsed = state.collapsed;
+    var html = "";
+
+    html += '<div class="logo-row">';
+    if (!collapsed){
+      html += '<span class="logo-text">Objekt<span>Pilot</span></span>';
+      html += '<button class="collapse-btn" onclick="App.toggleSidebar()" title="Einklappen">◀</button>';
+    } else {
+      html += '<span style="font-size:20px;">🏢</span>';
+    }
+    html += '</div>';
+    if (collapsed){
+      html += '<button class="collapse-btn fixed-expand" onclick="App.toggleSidebar()" title="Ausklappen">▶</button>';
+    }
+
+    if (!collapsed){
+      html += '<div class="quick-stats">';
+      if (s.dringend>0){
+        html += '<div class="urgent-banner">⚠ '+s.dringend+' dringend'+(s.dringend!==1?'e':'es')+' Ticket</div>';
+      }
+      html += '<div class="stat-row"><span>Offen</span><span style="color:#3B82F6;font-weight:700;">'+s.offen+'</span></div>';
+      html += '<div class="stat-row"><span>In Arbeit</span><span style="color:#EAB308;font-weight:700;">'+s.in_bearbeitung+'</span></div>';
+      html += '<div class="stat-row"><span>Erledigt</span><span style="color:#22C55E;font-weight:700;">'+s.erledigt+'</span></div>';
+      html += '</div>';
+    }
+
+    [{key:"dashboard",icon:"📊",label:"Übersicht"},{key:"list",icon:"📋",label:"Alle Tickets"},{key:"create",icon:"➕",label:"Neu erstellen"}].forEach(function(item){
+      html += '<button class="nav-item'+(state.view===item.key?' active':'')+'" title="'+item.label+'" onclick="App.goTo(\''+item.key+'\')">';
+      html += '<span class="icon">'+item.icon+'</span>';
+      if (!collapsed) html += '<span>'+item.label+'</span>';
+      html += '</button>';
+    });
+
+    if (!collapsed){
+      html += '<div class="sidebar-footer">';
+      html += '<div class="gh-status">🔗 <strong>'+escapeHtml(config?config.owner+"/"+config.repo:"")+'</strong></div>';
+      html += '<button class="nav-item" style="padding:8px 0;" onclick="App.manualRefresh()">';
+      html += '<span class="icon">'+(state.refreshing?'<span class="spin">🔄</span>':'🔄')+'</span><span>Aktualisieren</span></button>';
+      html += '<button class="nav-item" style="padding:8px 0;" onclick="App.openSettings()"><span class="icon">⚙</span><span>Einstellungen</span></button>';
+      html += '</div>';
+    }
+
+    var sidebar = document.getElementById("sidebar");
+    sidebar.className = "sidebar"+(collapsed?" collapsed":"");
+    sidebar.innerHTML = html;
+  }
+
+  /* ═══════════════════════════════════════════
+     SHARED RENDER HELPERS
+  ═══════════════════════════════════════════ */
+  function statCardHtml(icon,label,value,color,onclickAttr){
+    return '<div class="stat-card" style="border-top:3px solid '+color+';"'+(onclickAttr?' onclick="'+onclickAttr+'"':'')+'>'+
+      '<div class="stat-icon">'+icon+'</div><div class="stat-value" style="color:'+color+';">'+value+'</div>'+
+      '<div class="stat-label">'+escapeHtml(label)+'</div></div>';
+  }
+  function emptyStateHtml(filtered){
+    var html='<div class="empty-state"><div class="empty-icon">'+(filtered?"🔎":"📭")+'</div>';
+    html+='<div class="empty-title">'+(filtered?"Keine Tickets gefunden":"Noch keine Tickets")+'</div>';
+    html+='<div class="empty-text">'+(filtered?"Passe die Filter an oder setze sie zurück.":"Erstelle dein erstes Ticket für dieses Objekt.")+'</div>';
+    if (!filtered) html+='<button class="btn btn-primary" onclick="App.goTo(\'create\')">＋ Neues Ticket</button>';
+    html+='</div>';
+    return html;
+  }
+  function ticketRowHtml(t, withDelete){
+    var cat=CATEGORIES[t.category]||CATEGORIES.sonstiges;
+    var pri=PRIORITIES[t.priority]||PRIORITIES.mittel;
+    var sta=STATUSES[t.status]||STATUSES.offen;
+    var html='<div class="ticket-row" style="border-left:4px solid '+cat.color+';" onclick="App.openDetail(\''+t.id+'\')">';
+    html+='<span class="ticket-emoji">'+cat.emoji+'</span><div style="flex:1;min-width:0;">';
+    html+='<div class="ticket-title-row"><span class="ticket-title">'+escapeHtml(t.title)+'</span>';
+    html+=pillHtml(sta.label,sta.color)+pillHtml(pri.label,pri.color)+'</div>';
+    if (t.description){
+      var desc=t.description.length>100?t.description.slice(0,100)+"…":t.description;
+      html+='<div class="ticket-desc">'+escapeHtml(desc)+'</div>';
+    }
+    html+='<div class="ticket-meta"><span>📅 '+fmtD(t.createdAt)+'</span>';
+    if (t.ort) html+='<span>📍 '+escapeHtml(t.ort)+'</span>';
+    if (t.verantwortlich) html+='<span>👤 '+escapeHtml(t.verantwortlich)+'</span>';
+    if (t.author) html+='<span>via @'+escapeHtml(t.author)+'</span>';
+    html+='<span class="spacer">'+timeAgo(t.createdAt)+'</span></div></div>';
+    if (withDelete){
+      html+='<button class="btn btn-ghost" title="Ticket entfernen" onclick="event.stopPropagation();App.askDelete(\''+t.id+'\')">🗑</button>';
+    }
+    html+='</div>';
+    return html;
+  }
+
+  /* ═══════════════════════════════════════════
+     DASHBOARD
+  ═══════════════════════════════════════════ */
+  function renderDashboard(){
+    var s=getStats();
+    var html='<div class="row-between"><h1>Übersicht</h1>';
+    html+='<button class="btn btn-secondary" onclick="App.manualRefresh()">'+(state.refreshing?'<span class="spin">🔄</span> Aktualisiere…':'🔄 Aktualisieren')+'</button></div>';
+
+    html+='<div class="stat-grid">';
+    html+=statCardHtml("🗂️","Gesamt",s.total,"#64748B","");
+    html+=statCardHtml("📭","Offen",s.offen,"#3B82F6","App.filterAndGoList('status','offen')");
+    html+=statCardHtml("⚙️","In Bearbeitung",s.in_bearbeitung,"#EAB308","App.filterAndGoList('status','in_bearbeitung')");
+    html+=statCardHtml("✅","Erledigt",s.erledigt,"#22C55E","App.filterAndGoList('status','erledigt')");
+    html+=statCardHtml("🚨","Dringend",s.dringend,"#EF4444","App.filterAndGoList('priority','dringend')");
+    html+='</div>';
+
+    html+='<h2 class="section-title">Nach Kategorie</h2><div class="cat-grid">';
+    CATEGORY_KEYS.forEach(function(key){
+      var cat=CATEGORIES[key];
+      var count=state.tickets.filter(function(t){return t.category===key && t.status!=="erledigt";}).length;
+      html+='<div class="cat-card" style="border-left:4px solid '+cat.color+';" onclick="App.filterAndGoList(\'category\',\''+key+'\')">';
+      html+='<span class="cat-emoji">'+cat.emoji+'</span><div style="flex:1;margin-left:12px;">';
+      html+='<div class="cat-name">'+escapeHtml(cat.label)+'</div><div class="cat-count" style="color:'+cat.color+';">'+count+'</div>';
+      html+='</div><span class="cat-suffix">offen</span></div>';
+    });
+    html+='</div>';
+
+    html+='<div class="row-between" style="margin-bottom:12px;"><h2 class="section-title" style="margin:0;">Zuletzt erstellt</h2>';
+    html+='<button class="btn btn-ghost" style="color:var(--accent);font-size:13px;" onclick="App.goTo(\'list\')">Alle anzeigen →</button></div>';
+
+    var recent=sortedByDateDesc(state.tickets).slice(0,6);
+    if (recent.length===0) html+=emptyStateHtml(false);
+    else recent.forEach(function(t){ html+=ticketRowHtml(t,false); });
+
+    document.getElementById("mainContainer").innerHTML=html;
+  }
+
+  /* ═══════════════════════════════════════════
+     LIST VIEW
+  ═══════════════════════════════════════════ */
+  function renderList(){
+    var html='<div class="row-between"><h1>Alle Tickets</h1><div style="display:flex;gap:8px;">';
+    html+='<button class="btn btn-secondary" onclick="App.manualRefresh()">'+(state.refreshing?'<span class="spin">🔄</span>':'🔄')+'</button>';
+    html+='<button class="btn btn-primary" onclick="App.goTo(\'create\')">＋ Neues Ticket</button></div></div>';
+
+    html+='<div class="filter-bar">';
+    html+='<input type="text" class="input" id="searchInput" placeholder="🔍  Suchen…" value="'+escapeHtml(searchTerm)+'" oninput="App.onFilterChange()">';
+
+    html+='<select class="input" id="statusFilter" onchange="App.onFilterChange()"><option value="all"'+(filters.status==="all"?" selected":"")+'>Alle Status</option>';
+    STATUS_KEYS.forEach(function(k){ html+='<option value="'+k+'"'+(filters.status===k?" selected":"")+'>'+STATUSES[k].label+'</option>'; });
+    html+='</select>';
+
+    html+='<select class="input" id="categoryFilter" onchange="App.onFilterChange()"><option value="all"'+(filters.category==="all"?" selected":"")+'>Alle Kategorien</option>';
+    CATEGORY_KEYS.forEach(function(k){ html+='<option value="'+k+'"'+(filters.category===k?" selected":"")+'>'+CATEGORIES[k].emoji+' '+CATEGORIES[k].label+'</option>'; });
+    html+='</select>';
+
+    html+='<select class="input" id="priorityFilter" onchange="App.onFilterChange()"><option value="all"'+(filters.priority==="all"?" selected":"")+'>Alle Prioritäten</option>';
+    PRIORITY_KEYS.forEach(function(k){ html+='<option value="'+k+'"'+(filters.priority===k?" selected":"")+'>'+PRIORITIES[k].label+'</option>'; });
+    html+='</select>';
+
+    if (isFiltered()) html+='<button class="btn btn-secondary" onclick="App.resetFilters()">✕ Zurücksetzen</button>';
+    html+='</div>';
+
+    html+='<div class="result-count" id="resultCount"></div><div id="ticketListBody"></div>';
+
+    document.getElementById("mainContainer").innerHTML=html;
+    renderTicketListBody();
+  }
+  function renderTicketListBody(){
+    var filtered=getFilteredTickets();
+    var countEl=document.getElementById("resultCount");
+    if (countEl) countEl.textContent=filtered.length+" Ticket"+(filtered.length!==1?"s":"")+(isFiltered()?" gefunden":" gesamt");
+    var body=document.getElementById("ticketListBody");
+    if (!body) return;
+    body.innerHTML = filtered.length===0 ? emptyStateHtml(isFiltered()) : filtered.map(function(t){return ticketRowHtml(t,true);}).join("");
+  }
+
+  /* ═══════════════════════════════════════════
+     CREATE FORM
+  ═══════════════════════════════════════════ */
+  function renderCreateForm(){
+    var html='<div style="display:flex;align-items:center;gap:14px;margin-bottom:24px;">';
+    html+='<button class="btn btn-secondary" onclick="App.cancelCreate()">← Zurück</button><h1>Neues Ticket erstellen</h1></div>';
+    html+='<div class="form-card">';
+
+    html+='<div class="field"><label class="field-label">Titel *</label>';
+    html+='<input type="text" class="input'+(formErrors.title?' err':'')+'" id="f_title" maxlength="120" placeholder="z.B. Heizung defekt – Inspektion beauftragen" autofocus>';
+    if (formErrors.title) html+='<div class="field-error">⚠ '+escapeHtml(formErrors.title)+'</div>';
+    html+='</div>';
+
+    html+='<div class="field"><label class="field-label">Beschreibung</label>';
+    html+='<textarea class="input" id="f_description" maxlength="800" placeholder="Details, Hintergründe, Anmerkungen…"></textarea></div>';
+
+    html+='<div class="form-grid2">';
+    html+='<div class="field"><label class="field-label">Kategorie</label><select class="input" id="f_category">';
+    CATEGORY_KEYS.forEach(function(k){ html+='<option value="'+k+'">'+CATEGORIES[k].emoji+' '+CATEGORIES[k].label+'</option>'; });
+    html+='</select></div>';
+    html+='<div class="field"><label class="field-label">Priorität</label><select class="input" id="f_priority">';
+    PRIORITY_KEYS.forEach(function(k){ html+='<option value="'+k+'"'+(k==="mittel"?" selected":"")+'>'+PRIORITIES[k].label+'</option>'; });
+    html+='</select></div>';
+    html+='<div class="field"><label class="field-label">Ort / Bereich im Objekt</label><input type="text" class="input" id="f_ort" maxlength="80" placeholder="z.B. Küche, Bad OG, Keller…"></div>';
+    html+='<div class="field"><label class="field-label">Verantwortlich</label><input type="text" class="input" id="f_verantwortlich" maxlength="80" placeholder="z.B. Hausmeister, Verwaltung…"></div>';
+    html+='</div>';
+
+    html+='<div class="info-box">📅 Erstelldatum wird automatisch von GitHub gesetzt: <strong>'+fmtDT(new Date().toISOString())+'</strong></div>';
+
+    html+='<div class="form-actions">';
+    html+='<button class="btn btn-secondary" onclick="App.cancelCreate()">Abbrechen</button>';
+    html+='<button class="btn btn-primary" onclick="App.submitCreate()" '+(saving?'disabled':'')+'>'+(saving?"Speichere…":"✓  Ticket erstellen")+'</button>';
+    html+='</div></div>';
+
+    document.getElementById("mainContainer").innerHTML=html;
+
+    if (formDraft){
+      ["title","description","category","priority","ort","verantwortlich"].forEach(function(key){
+        var el=document.getElementById("f_"+key);
+        if (el && formDraft[key]!==undefined) el.value=formDraft[key];
+      });
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     DETAIL VIEW
+  ═══════════════════════════════════════════ */
+  function renderDetail(){
+    var t=state.tickets.find(function(x){return x.id===state.activeId;});
+    if (!t){
+      document.getElementById("mainContainer").innerHTML =
+        '<div style="text-align:center;padding-top:64px;"><div style="font-size:40px;">❓</div>'+
+        '<p style="color:var(--muted);margin-top:12px;">Ticket nicht gefunden (eventuell wurde es bereits entfernt).</p>'+
+        '<button class="btn btn-secondary" style="margin-top:12px;" onclick="App.goTo(\'list\')">Zurück zur Liste</button></div>';
+      return;
+    }
+    var cat=CATEGORIES[t.category]||CATEGORIES.sonstiges;
+    var pri=PRIORITIES[t.priority]||PRIORITIES.mittel;
+    var sta=STATUSES[t.status]||STATUSES.offen;
+    var busy=!!statusUpdating[t.id];
+
+    var html='<div class="row-between">';
+    html+='<button class="btn btn-secondary" onclick="App.goTo(\'list\')">← Zurück zur Liste</button>';
+    html+='<button class="btn btn-danger" onclick="App.askDelete(\''+t.id+'\')">🗑 Entfernen</button></div>';
+
+    html+='<div class="detail-card"><div class="detail-colorbar" style="background:'+cat.color+';"></div><div class="detail-body">';
+    html+='<div class="detail-badges">'+pillHtml(cat.emoji+" "+cat.label,cat.color)+pillHtml("● "+pri.label,pri.color)+pillHtml(sta.label,sta.color)+'</div>';
+    html+='<h1 class="detail-title">'+escapeHtml(t.title)+'</h1>';
+    if (t.description) html+='<p class="detail-desc">'+escapeHtml(t.description)+'</p>';
+
+    html+='<div class="meta-grid">';
+    html+='<div class="meta-item"><div class="meta-item-label">📅 Erstellt am</div><div class="meta-item-value">'+fmtDT(t.createdAt)+'</div></div>';
+    html+='<div class="meta-item"><div class="meta-item-label">🔄 Zuletzt geändert</div><div class="meta-item-value">'+fmtDT(t.updatedAt)+'</div></div>';
+    if (t.ort) html+='<div class="meta-item"><div class="meta-item-label">📍 Ort / Bereich</div><div class="meta-item-value">'+escapeHtml(t.ort)+'</div></div>';
+    if (t.verantwortlich) html+='<div class="meta-item"><div class="meta-item-label">👤 Verantwortlich</div><div class="meta-item-value">'+escapeHtml(t.verantwortlich)+'</div></div>';
+    if (t.author) html+='<div class="meta-item"><div class="meta-item-label">✍️ Erstellt von</div><div class="meta-item-value">@'+escapeHtml(t.author)+'</div></div>';
+    html+='</div>';
+
+    html+='<div class="status-section"><div class="status-label">Status ändern</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+    STATUS_KEYS.forEach(function(k){
+      var v=STATUSES[k]; var active=t.status===k;
+      var style='border:2px solid '+(active?v.color:'var(--border)')+';background:'+(active?v.color+'22':'transparent')+';color:'+(active?v.color:'var(--muted)')+';';
+      html+='<button class="status-btn" style="'+style+'" onclick="App.changeStatus(\''+t.id+'\',\''+k+'\')" '+(busy?'disabled':'')+'>'+(active?"✓ ":"")+v.label+'</button>';
+    });
+    if (busy) html+='<span class="spin" style="margin-left:6px;">⏳</span>';
+    html+='</div></div>';
+
+    if (t.htmlUrl) html+='<div style="margin-top:16px;"><a class="gh-link" href="'+escapeHtml(t.htmlUrl)+'" target="_blank" rel="noopener noreferrer">Auf GitHub öffnen ↗</a></div>';
+
+    html+='</div></div>';
+    document.getElementById("mainContainer").innerHTML=html;
+  }
+
+  /* ═══════════════════════════════════════════
+     MAIN RENDER
+  ═══════════════════════════════════════════ */
+  function render(){
+    renderErrorBanner();
+    renderSidebar();
+    if (state.view==="dashboard") renderDashboard();
+    else if (state.view==="list") renderList();
+    else if (state.view==="create") renderCreateForm();
+    else if (state.view==="detail") renderDetail();
+
+    document.getElementById("confirmOverlay").className = "modal-overlay"+(state.confirmId?" show":"");
+    document.getElementById("settingsOverlay").className = "modal-overlay"+(settingsOpen?" show":"");
+    if (settingsOpen) renderSettingsModal();
+  }
+
+  /* ═══════════════════════════════════════════
+     DATA REFRESH / AUTO-POLL
+  ═══════════════════════════════════════════ */
+  async function refreshTickets(silent){
+    if (state.refreshing) return;
+    state.refreshing = true;
+    if (!silent) render();
+    try{
+      var tickets = await fetchTicketsFromGitHub();
+      state.tickets = tickets;
+      state.error = null;
+    }catch(e){
+      state.error = e.message || "Unbekannter Fehler beim Laden.";
+      if (!silent) notify(state.error, "err");
+    }
+    state.refreshing = false;
+    render();
+  }
+  function startAutoRefresh(){
+    stopAutoRefresh();
+    autoRefreshTimer = setInterval(function(){
+      if ((state.view==="dashboard"||state.view==="list") && !state.confirmId && !settingsOpen && !state.refreshing){
+        refreshTickets(true);
+      }
+    }, AUTO_REFRESH_MS);
+  }
+  function stopAutoRefresh(){
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  }
+
+  /* ═══════════════════════════════════════════
+     ACTIONS
+  ═══════════════════════════════════════════ */
+  var App = {
+    goTo: function(view){
+      if (view==="create") formDraft=null;
+      formErrors={};
+      state.view=view;
+      render();
+    },
+    toggleSidebar: function(){ state.collapsed=!state.collapsed; renderSidebar(); },
+
+    filterAndGoList: function(key,value){
+      filters={status:"all",category:"all",priority:"all"};
+      filters[key]=value; searchTerm=""; state.view="list"; render();
+    },
+    onFilterChange: function(){
+      var sEl=document.getElementById("searchInput"), stEl=document.getElementById("statusFilter"),
+          catEl=document.getElementById("categoryFilter"), priEl=document.getElementById("priorityFilter");
+      searchTerm=sEl?sEl.value:""; filters.status=stEl?stEl.value:"all";
+      filters.category=catEl?catEl.value:"all"; filters.priority=priEl?priEl.value:"all";
+      renderTicketListBody();
+    },
+    resetFilters: function(){ filters={status:"all",category:"all",priority:"all"}; searchTerm=""; render(); },
+
+    openDetail: function(id){ state.activeId=id; state.view="detail"; render(); },
+
+    submitCreate: async function(){
+      var title=(document.getElementById("f_title").value||"").trim();
+      var description=(document.getElementById("f_description").value||"").trim();
+      var category=document.getElementById("f_category").value;
+      var priority=document.getElementById("f_priority").value;
+      var ort=(document.getElementById("f_ort").value||"").trim();
+      var verantwortlich=(document.getElementById("f_verantwortlich").value||"").trim();
+
+      var errs={};
+      if (!title||title.length<3) errs.title="Mindestens 3 Zeichen erforderlich";
+      if (Object.keys(errs).length){
+        formErrors=errs;
+        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich};
+        renderCreateForm();
+        var tEl=document.getElementById("f_title"); if (tEl) tEl.focus();
+        return;
+      }
+
+      saving=true; renderCreateForm();
+      try{
+        var ticket = await createTicketOnGitHub({title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich});
+        state.tickets=[ticket].concat(state.tickets);
+        formDraft=null; formErrors={};
+        notify("Ticket erstellt ✓ (Issue #"+ticket.number+")","ok");
+        state.view="list";
+      }catch(e){
+        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich};
+        notify(e.message||"Fehler beim Erstellen des Tickets.","err");
+      }
+      saving=false; render();
+    },
+    cancelCreate: function(){ formDraft=null; formErrors={}; state.view="dashboard"; render(); },
+
+    changeStatus: async function(id,status){
+      if (STATUS_KEYS.indexOf(status)===-1) return;
+      if (statusUpdating[id]) return;
+      var ticket=state.tickets.find(function(t){return t.id===id;});
+      if (!ticket) return;
+      statusUpdating[id]=true; render();
+      try{
+        var updated=await updateTicketStatusOnGitHub(ticket,status);
+        state.tickets=state.tickets.map(function(t){ return t.id===updated.id?updated:t; });
+        notify("Status aktualisiert ✓","ok");
+      }catch(e){
+        notify(e.message||"Fehler beim Aktualisieren.","err");
+      }
+      delete statusUpdating[id];
+      render();
+    },
+
+    askDelete: function(id){ state.confirmId=id; render(); },
+    cancelDelete: function(){ state.confirmId=null; render(); },
+    confirmDelete: async function(){
+      var id=state.confirmId;
+      if (!id) return;
+      var ticket=state.tickets.find(function(t){return t.id===id;});
+      state.confirmId=null; render();
+      if (!ticket) return;
+      try{
+        await softDeleteTicketOnGitHub(ticket);
+        state.tickets=state.tickets.filter(function(t){return t.id!==id;});
+        if (state.activeId===id){ state.activeId=null; state.view="list"; }
+        notify("Ticket entfernt (Issue geschlossen)","ok");
+      }catch(e){
+        notify(e.message||"Fehler beim Entfernen.","err");
+      }
+      render();
+    },
+
+    manualRefresh: function(){ refreshTickets(false); },
+    dismissError: function(){ state.error=null; render(); },
+
+    openSettings: function(){ settingsOpen=true; settingsErrors={}; render(); },
+    closeSettings: function(){ settingsOpen=false; render(); },
+    saveSettings: async function(){
+      var owner=document.getElementById("st_owner").value.trim();
+      var repo=document.getElementById("st_repo").value.trim();
+      var token=document.getElementById("st_token").value.trim();
+      var errs={};
+      if (!owner) errs.owner="Pflichtfeld";
+      if (!repo) errs.repo="Pflichtfeld";
+      if (!token) errs.token="Pflichtfeld";
+      if (Object.keys(errs).length){ settingsErrors=errs; renderSettingsModal(); return; }
+
+      settingsTesting=true; settingsErrors={}; renderSettingsModal();
+      var result=await testConnection({owner:owner,repo:repo,token:token});
+      settingsTesting=false;
+      if (!result.ok){ settingsErrors={general:result.message}; renderSettingsModal(); return; }
+
+      config={owner:owner,repo:repo,token:token};
+      saveConfigToStorage(config);
+      settingsOpen=false;
+      notify("Verbindung aktualisiert ✓","ok");
+      render();
+      refreshTickets(false);
+    },
+    disconnectGitHub: function(){
+      clearConfigFromStorage();
+      config=null; settingsOpen=false;
+      stopAutoRefresh();
+      state.tickets=[]; state.view="dashboard"; state.error=null;
+      document.getElementById("app").style.display="none";
+      document.getElementById("setupScreen").style.display="flex";
+      setupErrors={};
+      renderSetup();
+    },
+
+    saveSetup: async function(){
+      var owner=document.getElementById("su_owner").value.trim();
+      var repo=document.getElementById("su_repo").value.trim();
+      var token=document.getElementById("su_token").value.trim();
+      var errs={};
+      if (!owner) errs.owner="Pflichtfeld";
+      if (!repo) errs.repo="Pflichtfeld";
+      if (!token) errs.token="Pflichtfeld";
+      if (Object.keys(errs).length){ setupErrors=errs; renderSetup(); return; }
+
+      setupTesting=true; setupErrors={}; renderSetup();
+      var result=await testConnection({owner:owner,repo:repo,token:token});
+      setupTesting=false;
+
+      if (!result.ok){ setupErrors={general:result.message}; renderSetup(); return; }
+
+      config={owner:owner,repo:repo,token:token};
+      saveConfigToStorage(config);
+
+      document.getElementById("setupScreen").style.display="none";
+      document.getElementById("loadingText").textContent="Tickets werden geladen…";
+      document.getElementById("loadingScreen").style.display="flex";
+      await initialLoad();
+    }
+  };
+  window.App = App;
+
+  document.getElementById("confirmOverlay").addEventListener("click", function(e){
+    if (e.target.id==="confirmOverlay") App.cancelDelete();
+  });
+  document.getElementById("settingsOverlay").addEventListener("click", function(e){
+    if (e.target.id==="settingsOverlay") App.closeSettings();
+  });
+  document.addEventListener("keydown", function(e){
+    if (e.key==="Enter" && e.target.tagName==="INPUT" && e.target.type!=="password"){
+      e.preventDefault();
+      if (e.target.id==="f_title"||e.target.id==="f_ort"||e.target.id==="f_verantwortlich"){ App.submitCreate(); }
+      if (e.target.id==="su_owner"||e.target.id==="su_repo") { App.saveSetup(); }
+    }
+    if (e.key==="Enter" && e.target.id==="su_token"){ e.preventDefault(); App.saveSetup(); }
+  });
+
+  /* ═══════════════════════════════════════════
+     INIT
+  ═══════════════════════════════════════════ */
+  async function initialLoad(){
+    try{
+      state.tickets = await fetchTicketsFromGitHub();
+      state.error = null;
+    }catch(e){
+      state.error = e.message || "Fehler beim Laden der Tickets.";
+    }
+    document.getElementById("loadingScreen").style.display="none";
+    document.getElementById("app").style.display="flex";
+    render();
+    if (state.error) notify(state.error,"err");
+    startAutoRefresh();
+  }
+
+  function init(){
+    config = loadConfig();
+    if (!config){
+      document.getElementById("setupScreen").style.display="flex";
+      renderSetup();
+      return;
+    }
+    document.getElementById("loadingText").textContent="Verbindung zu GitHub wird hergestellt…";
+    document.getElementById("loadingScreen").style.display="flex";
+    initialLoad();
+  }
+
+  if (document.readyState==="loading"){
+    document.addEventListener("DOMContentLoaded", init);
+  } else { init(); }
+
+})();
+</script>
+</body>
+</html>
