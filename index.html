@@ -373,7 +373,7 @@
   var DELETED_LABEL = "geloescht";
   var INPROGRESS_LABEL = "status:in-bearbeitung";
   var AUTO_REFRESH_MS = 30000;
-  var BUILD_VERSION = "2026-06-20 12:11";
+  var BUILD_VERSION = "2026-06-20 12:21";
 
   var CATEGORIES = {
     reparatur:   { label: "Reparatur",          emoji: "🔧", color: "#EF4444" },
@@ -558,12 +558,13 @@
     return all;
   }
 
-  function buildBody(description, ort, verantwortlich, dueAt){
+  function buildBody(description, ort, verantwortlich, dueAt, ersteller){
     var body = (description || "").trim();
     var metaLines = [];
     if (ort) metaLines.push("📍 **Ort:** " + ort);
     if (verantwortlich) metaLines.push("👤 **Verantwortlich:** " + verantwortlich);
     if (dueAt) metaLines.push("⏰ **Fällig:** " + dueAt);
+    if (ersteller) metaLines.push("📝 **Gemeldet von:** " + ersteller);
     if (metaLines.length){
       body += (body ? "\n\n---\n" : "---\n") + metaLines.join("\n");
     }
@@ -581,18 +582,20 @@
       description = body.slice(0, idx).trim();
       meta = body.slice(idx + 5);
     }
-    var ort = "", verantwortlich = "", dueAt = "";
+    var ort = "", verantwortlich = "", dueAt = "", ersteller = "";
     var ortMatch = meta.match(/📍\s*\*\*Ort:\*\*\s*(.+)/);
     var vMatch = meta.match(/👤\s*\*\*Verantwortlich:\*\*\s*(.+)/);
     var dueMatch = meta.match(/⏰\s*\*\*Fällig:\*\*\s*(.+)/);
+    var erMatch = meta.match(/📝\s*\*\*Gemeldet von:\*\*\s*(.+)/);
     if (ortMatch) ort = ortMatch[1].trim();
     if (vMatch) verantwortlich = vMatch[1].trim();
+    if (erMatch) ersteller = erMatch[1].trim();
     if (dueMatch){
       var candidate = dueMatch[1].trim();
       var testDate = new Date(candidate);
       if (!isNaN(testDate.getTime())) dueAt = candidate;
     }
-    return { description: description, ort: ort, verantwortlich: verantwortlich, dueAt: dueAt };
+    return { description: description, ort: ort, verantwortlich: verantwortlich, dueAt: dueAt, ersteller: ersteller };
   }
 
   function labelNames(issue){
@@ -626,6 +629,7 @@
       ort: parsed.ort,
       verantwortlich: parsed.verantwortlich,
       dueAt: parsed.dueAt,
+      ersteller: parsed.ersteller,
       category: category,
       priority: priority,
       status: status,
@@ -648,7 +652,7 @@
 
   async function createTicketOnGitHub(formData){
     var labels = ["kategorie:" + formData.category, "prioritaet:" + formData.priority];
-    var body = buildBody(formData.description, formData.ort, formData.verantwortlich, formData.dueAt);
+    var body = buildBody(formData.description, formData.ort, formData.verantwortlich, formData.dueAt, formData.ersteller);
     var res = await ghRequest("POST", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues", {
       title: formData.title, body: body, labels: labels
     });
@@ -668,9 +672,21 @@
   }
 
   async function updateTicketDueDateOnGitHub(ticket, newDueAt){
-    var body = buildBody(ticket.description, ticket.ort, ticket.verantwortlich, newDueAt);
+    var body = buildBody(ticket.description, ticket.ort, ticket.verantwortlich, newDueAt, ticket.ersteller);
     var res = await ghRequest("PATCH", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues/" + ticket.number, {
       body: body
+    });
+    var issue = await res.json();
+    return issueToTicket(issue);
+  }
+
+  async function updateTicketFullOnGitHub(ticket, formData){
+    var labels = ["kategorie:" + formData.category, "prioritaet:" + formData.priority];
+    if (ticket.status === "in_bearbeitung") labels.push(INPROGRESS_LABEL);
+    // "erledigt" status = closed issue state (not a label) — preserved automatically since "state" is omitted below
+    var body = buildBody(formData.description, formData.ort, formData.verantwortlich, formData.dueAt, formData.ersteller);
+    var res = await ghRequest("PATCH", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues/" + ticket.number, {
+      title: formData.title, body: body, labels: labels
     });
     var issue = await res.json();
     return issueToTicket(issue);
@@ -712,6 +728,7 @@
   var autoRefreshTimer = null;
   var mobileSidebarOpen = false;
   var knownTicketIds = null;
+  var editingTicketId = null;
 
   /* ═══════════════════════════════════════════
      TOAST / ERROR BANNER
@@ -940,9 +957,9 @@
     }
     html+='<div class="ticket-meta"><span>📅 '+fmtD(t.createdAt)+'</span>';
     if (t.dueAt) html+='<span style="'+(overdue?'color:#EF4444;font-weight:700;':'')+'">⏰ Fällig: '+fmtDT(t.dueAt)+'</span>';
+    if (t.ersteller) html+='<span>📝 '+escapeHtml(t.ersteller)+'</span>';
     if (t.ort) html+='<span>📍 '+escapeHtml(t.ort)+'</span>';
     if (t.verantwortlich) html+='<span>👤 '+escapeHtml(t.verantwortlich)+'</span>';
-    if (t.author) html+='<span>via @'+escapeHtml(t.author)+'</span>';
     html+='<span class="spacer">'+timeAgo(t.createdAt)+'</span></div></div>';
     if (withDelete){
       html+='<button class="btn btn-ghost" title="Ticket entfernen" onclick="event.stopPropagation();App.askDelete(\''+t.id+'\')">🗑</button>';
@@ -1036,8 +1053,9 @@
      CREATE FORM
   ═══════════════════════════════════════════ */
   function renderCreateForm(){
+    var isEdit = !!editingTicketId;
     var html='<div style="display:flex;align-items:center;gap:14px;margin-bottom:24px;">';
-    html+='<button class="btn btn-secondary" onclick="App.cancelCreate()">← Zurück</button><h1>Neues Ticket erstellen</h1></div>';
+    html+='<button class="btn btn-secondary" onclick="App.cancelCreate()">← Zurück</button><h1>'+(isEdit?"Ticket bearbeiten":"Neues Ticket erstellen")+'</h1></div>';
     html+='<div class="form-card">';
 
     html+='<div class="field"><label class="field-label">Titel *</label>';
@@ -1047,6 +1065,14 @@
 
     html+='<div class="field"><label class="field-label">Beschreibung</label>';
     html+='<textarea class="input" id="f_description" maxlength="800" placeholder="Details, Hintergründe, Anmerkungen…"></textarea></div>';
+
+    html+='<div class="field"><label class="field-label">Gemeldet von *</label>';
+    html+='<select class="input'+(formErrors.ersteller?' err':'')+'" id="f_ersteller">';
+    html+='<option value="">Bitte auswählen…</option>';
+    VERANTWORTLICH_OPTIONS.forEach(function(name){ html+='<option value="'+escapeHtml(name)+'">'+escapeHtml(name)+'</option>'; });
+    html+='</select>';
+    if (formErrors.ersteller) html+='<div class="field-error">⚠ '+escapeHtml(formErrors.ersteller)+'</div>';
+    html+='</div>';
 
     html+='<div class="form-grid2">';
     html+='<div class="field"><label class="field-label">Kategorie</label><select class="input" id="f_category">';
@@ -1072,17 +1098,21 @@
     if (formErrors.dueAt) html+='<div class="field-error">⚠ '+escapeHtml(formErrors.dueAt)+'</div>';
     html+='<div class="field-hint">Wird leer gelassen, wenn keine Fälligkeit benötigt wird.</div></div>';
 
-    html+='<div class="info-box">📅 Erstelldatum wird automatisch von GitHub gesetzt: <strong>'+fmtDT(new Date().toISOString())+'</strong></div>';
+    if (isEdit){
+      html+='<div class="info-box">🔄 "Zuletzt geändert" wird automatisch von GitHub aktualisiert.</div>';
+    } else {
+      html+='<div class="info-box">📅 Erstelldatum wird automatisch von GitHub gesetzt: <strong>'+fmtDT(new Date().toISOString())+'</strong></div>';
+    }
 
     html+='<div class="form-actions">';
     html+='<button class="btn btn-secondary" onclick="App.cancelCreate()">Abbrechen</button>';
-    html+='<button class="btn btn-primary" onclick="App.submitCreate()" '+(saving?'disabled':'')+'>'+(saving?"Speichere…":"✓  Ticket erstellen")+'</button>';
+    html+='<button class="btn btn-primary" onclick="App.submitCreate()" '+(saving?'disabled':'')+'>'+(saving?"Speichere…":(isEdit?"✓  Änderungen speichern":"✓  Ticket erstellen"))+'</button>';
     html+='</div></div>';
 
     document.getElementById("mainContainer").innerHTML=html;
 
     if (formDraft){
-      ["title","description","category","priority","ort","dueAt"].forEach(function(key){
+      ["title","description","category","priority","ort","dueAt","ersteller"].forEach(function(key){
         var el=document.getElementById("f_"+key);
         if (el && formDraft[key]!==undefined) el.value=formDraft[key];
       });
@@ -1119,7 +1149,10 @@
 
     var html='<div class="row-between">';
     html+='<button class="btn btn-secondary" onclick="App.goTo(\'list\')">← Zurück zur Liste</button>';
-    html+='<button class="btn btn-danger" onclick="App.askDelete(\''+t.id+'\')">🗑 Entfernen</button></div>';
+    html+='<div style="display:flex;gap:8px;">';
+    html+='<button class="btn btn-secondary" onclick="App.startEdit(\''+t.id+'\')">✏️ Bearbeiten</button>';
+    html+='<button class="btn btn-danger" onclick="App.askDelete(\''+t.id+'\')">🗑 Entfernen</button>';
+    html+='</div></div>';
 
     html+='<div class="detail-card"><div class="detail-colorbar" style="background:'+cat.color+';"></div><div class="detail-body">';
     html+='<div class="detail-badges">'+pillHtml(cat.emoji+" "+cat.label,cat.color)+pillHtml("● "+pri.label,pri.color)+pillHtml(sta.label,sta.color);
@@ -1132,9 +1165,10 @@
     html+='<div class="meta-item"><div class="meta-item-label">📅 Erstellt am</div><div class="meta-item-value">'+fmtDT(t.createdAt)+'</div></div>';
     html+='<div class="meta-item"><div class="meta-item-label">🔄 Zuletzt geändert</div><div class="meta-item-value">'+fmtDT(t.updatedAt)+'</div></div>';
     if (t.dueAt) html+='<div class="meta-item"><div class="meta-item-label">⏰ Fällig am</div><div class="meta-item-value" style="'+(overdue?'color:#EF4444;':'')+'">'+fmtDT(t.dueAt)+'</div></div>';
+    if (t.ersteller) html+='<div class="meta-item"><div class="meta-item-label">📝 Gemeldet von</div><div class="meta-item-value">'+escapeHtml(t.ersteller)+'</div></div>';
     if (t.ort) html+='<div class="meta-item"><div class="meta-item-label">📍 Ort / Bereich</div><div class="meta-item-value">'+escapeHtml(t.ort)+'</div></div>';
     if (t.verantwortlich) html+='<div class="meta-item"><div class="meta-item-label">👤 Verantwortlich</div><div class="meta-item-value">'+escapeHtml(t.verantwortlich)+'</div></div>';
-    if (t.author) html+='<div class="meta-item"><div class="meta-item-label">✍️ Erstellt von</div><div class="meta-item-value">@'+escapeHtml(t.author)+'</div></div>';
+    if (t.author) html+='<div class="meta-item"><div class="meta-item-label">🔗 GitHub-Konto</div><div class="meta-item-value">@'+escapeHtml(t.author)+'</div></div>';
     html+='</div>';
 
     html+='<div class="status-section"><div class="status-label">Status ändern</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
@@ -1254,7 +1288,7 @@
   ═══════════════════════════════════════════ */
   var App = {
     goTo: function(view){
-      if (view==="create") formDraft=null;
+      if (view==="create"){ formDraft=null; editingTicketId=null; }
       formErrors={};
       state.view=view;
       mobileSidebarOpen=false;
@@ -1288,6 +1322,7 @@
     submitCreate: async function(){
       var title=(document.getElementById("f_title").value||"").trim();
       var description=(document.getElementById("f_description").value||"").trim();
+      var ersteller=(document.getElementById("f_ersteller").value||"").trim();
       var category=document.getElementById("f_category").value;
       var priority=document.getElementById("f_priority").value;
       var ort=(document.getElementById("f_ort").value||"").trim();
@@ -1300,6 +1335,7 @@
 
       var errs={};
       if (!title||title.length<3) errs.title="Mindestens 3 Zeichen erforderlich";
+      if (!ersteller) errs.ersteller="Bitte auswählen, wer das Ticket meldet";
       var dueAtIso="";
       if (dueAtRaw){
         var dueAtDate=new Date(dueAtRaw);
@@ -1308,27 +1344,80 @@
       }
       if (Object.keys(errs).length){
         formErrors=errs;
-        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlichArr:verantwortlichArr,dueAt:dueAtRaw};
+        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlichArr:verantwortlichArr,dueAt:dueAtRaw,ersteller:ersteller};
         renderCreateForm();
-        var tEl=document.getElementById("f_title"); if (tEl) tEl.focus();
+        var firstErrId = errs.title ? "f_title" : (errs.ersteller ? "f_ersteller" : "f_dueAt");
+        var firstErrEl=document.getElementById(firstErrId); if (firstErrEl) firstErrEl.focus();
         return;
       }
 
       saving=true; renderCreateForm();
+
+      if (editingTicketId){
+        var existingTicket = state.tickets.find(function(t){ return t.id===editingTicketId; });
+        if (!existingTicket){
+          saving=false;
+          notify("Ticket nicht mehr gefunden — eventuell wurde es entfernt.","err");
+          editingTicketId=null; formDraft=null; formErrors={};
+          state.view="list"; render();
+          return;
+        }
+        try{
+          var updated = await updateTicketFullOnGitHub(existingTicket, {title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich,dueAt:dueAtIso,ersteller:ersteller});
+          state.tickets = state.tickets.map(function(t){ return t.id===updated.id?updated:t; });
+          formDraft=null; formErrors={};
+          var finishedId = editingTicketId;
+          editingTicketId=null;
+          notify("Ticket aktualisiert ✓","ok");
+          state.activeId=finishedId;
+          state.view="detail";
+        }catch(e){
+          formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlichArr:verantwortlichArr,dueAt:dueAtRaw,ersteller:ersteller};
+          notify(e.message||"Fehler beim Speichern der Änderungen.","err");
+        }
+        saving=false; render();
+        return;
+      }
+
       try{
-        var ticket = await createTicketOnGitHub({title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich,dueAt:dueAtIso});
+        var ticket = await createTicketOnGitHub({title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich,dueAt:dueAtIso,ersteller:ersteller});
         state.tickets=[ticket].concat(state.tickets);
         if (knownTicketIds) knownTicketIds[ticket.id]=true;
         formDraft=null; formErrors={};
         notify("Ticket erstellt ✓ (Issue #"+ticket.number+")","ok");
         state.view="list";
       }catch(e){
-        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlichArr:verantwortlichArr,dueAt:dueAtRaw};
+        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlichArr:verantwortlichArr,dueAt:dueAtRaw,ersteller:ersteller};
         notify(e.message||"Fehler beim Erstellen des Tickets.","err");
       }
       saving=false; render();
     },
-    cancelCreate: function(){ formDraft=null; formErrors={}; state.view="dashboard"; render(); },
+    cancelCreate: function(){
+      var returnToId = editingTicketId;
+      editingTicketId=null; formDraft=null; formErrors={};
+      if (returnToId){ state.activeId=returnToId; state.view="detail"; }
+      else { state.view="dashboard"; }
+      render();
+    },
+
+    startEdit: function(id){
+      var ticket=state.tickets.find(function(t){return t.id===id;});
+      if (!ticket) return;
+      editingTicketId=id;
+      formDraft={
+        title: ticket.title,
+        description: ticket.description,
+        category: ticket.category,
+        priority: ticket.priority,
+        ort: ticket.ort,
+        verantwortlichArr: ticket.verantwortlich ? ticket.verantwortlich.split(",").map(function(s){return s.trim();}).filter(Boolean) : [],
+        dueAt: toDatetimeLocalValue(ticket.dueAt),
+        ersteller: ticket.ersteller || ""
+      };
+      formErrors={};
+      state.view="create";
+      render();
+    },
 
     toggleVerantwortlichDropdown: function(){
       var panel=document.getElementById("verantwortlichPanel");
