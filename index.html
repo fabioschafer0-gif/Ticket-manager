@@ -166,6 +166,23 @@
   }
   .info-box strong{color:var(--text);}
   .form-actions{display:flex; gap:10px; justify-content:flex-end; margin-top:20px;}
+  .multiselect{position:relative;}
+  .multiselect-trigger{
+    width:100%; background:var(--surface); border:1px solid var(--border); border-radius:8px;
+    padding:9px 12px; color:var(--text); font-size:14px; text-align:left; cursor:pointer;
+    display:flex; justify-content:space-between; align-items:center; font-family:inherit;
+  }
+  .multiselect-trigger:focus{border-color:var(--accent); outline:none;}
+  .multiselect-trigger .chevron{color:var(--muted); font-size:12px;}
+  .multiselect-panel{
+    display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:50;
+    background:var(--card); border:1px solid var(--border); border-radius:8px; padding:6px;
+    box-shadow:0 10px 28px rgba(0,0,0,.5);
+  }
+  .multiselect-panel.open{display:block;}
+  .ms-option{display:flex; align-items:center; gap:10px; padding:9px 8px; border-radius:6px; cursor:pointer; font-size:14px; color:var(--text);}
+  .ms-option:hover{background:var(--surface);}
+  .ms-option input{width:17px; height:17px; cursor:pointer; accent-color:var(--accent); flex-shrink:0;}
 
   /* ===== Detail view ===== */
   .detail-card{background:var(--card); border-radius:12px; border:1px solid var(--border); overflow:hidden;}
@@ -360,6 +377,7 @@
     kauf:        { label: "Kauf / Bestellung",  emoji: "🛒", color: "#F97316" },
     renovierung: { label: "Renovierung",        emoji: "🏗️", color: "#8B5CF6" },
     reinigung:   { label: "Reinigung",          emoji: "🧹", color: "#06B6D4" },
+    haushalt:    { label: "Haushalt",           emoji: "🏠", color: "#10B981" },
     sonstiges:   { label: "Sonstiges",          emoji: "📋", color: "#64748B" }
   };
   var PRIORITIES = {
@@ -376,6 +394,7 @@
   var CATEGORY_KEYS = Object.keys(CATEGORIES);
   var PRIORITY_KEYS = Object.keys(PRIORITIES);
   var STATUS_KEYS   = Object.keys(STATUSES);
+  var VERANTWORTLICH_OPTIONS = ["Mel", "Daniel", "Fabio"];
 
   /* ═══════════════════════════════════════════
      GENERAL HELPERS
@@ -1034,7 +1053,15 @@
     PRIORITY_KEYS.forEach(function(k){ html+='<option value="'+k+'"'+(k==="mittel"?" selected":"")+'>'+PRIORITIES[k].label+'</option>'; });
     html+='</select></div>';
     html+='<div class="field"><label class="field-label">Ort / Bereich im Objekt</label><input type="text" class="input" id="f_ort" maxlength="80" placeholder="z.B. Küche, Bad OG, Keller…"></div>';
-    html+='<div class="field"><label class="field-label">Verantwortlich</label><input type="text" class="input" id="f_verantwortlich" maxlength="80" placeholder="z.B. Hausmeister, Verwaltung…"></div>';
+    html+='<div class="field"><label class="field-label">Verantwortlich</label>';
+    html+='<div class="multiselect" id="verantwortlichDropdown">';
+    html+='<button type="button" class="multiselect-trigger" onclick="App.toggleVerantwortlichDropdown()">';
+    html+='<span id="verantwortlichSummary">Person(en) auswählen</span><span class="chevron">▾</span></button>';
+    html+='<div class="multiselect-panel" id="verantwortlichPanel">';
+    VERANTWORTLICH_OPTIONS.forEach(function(name){
+      html+='<label class="ms-option"><input type="checkbox" value="'+escapeHtml(name)+'" onchange="App.updateVerantwortlichSummary()"> '+escapeHtml(name)+'</label>';
+    });
+    html+='</div></div></div>';
     html+='</div>';
 
     html+='<div class="field"><label class="field-label">Fälligkeitsdatum &amp; -uhrzeit (optional)</label>';
@@ -1052,10 +1079,20 @@
     document.getElementById("mainContainer").innerHTML=html;
 
     if (formDraft){
-      ["title","description","category","priority","ort","verantwortlich","dueAt"].forEach(function(key){
+      ["title","description","category","priority","ort","dueAt"].forEach(function(key){
         var el=document.getElementById("f_"+key);
         if (el && formDraft[key]!==undefined) el.value=formDraft[key];
       });
+      if (formDraft.verantwortlichArr && formDraft.verantwortlichArr.length){
+        var panel=document.getElementById("verantwortlichPanel");
+        if (panel){
+          formDraft.verantwortlichArr.forEach(function(name){
+            var cb=panel.querySelector('input[type=checkbox][value="'+name+'"]');
+            if (cb) cb.checked=true;
+          });
+          App.updateVerantwortlichSummary();
+        }
+      }
     }
   }
 
@@ -1251,7 +1288,11 @@
       var category=document.getElementById("f_category").value;
       var priority=document.getElementById("f_priority").value;
       var ort=(document.getElementById("f_ort").value||"").trim();
-      var verantwortlich=(document.getElementById("f_verantwortlich").value||"").trim();
+      var verantwortlichPanel=document.getElementById("verantwortlichPanel");
+      var verantwortlichArr=verantwortlichPanel
+        ? Array.prototype.slice.call(verantwortlichPanel.querySelectorAll("input[type=checkbox]:checked")).map(function(cb){return cb.value;})
+        : [];
+      var verantwortlich=verantwortlichArr.join(", ");
       var dueAtRaw=(document.getElementById("f_dueAt").value||"").trim();
 
       var errs={};
@@ -1264,7 +1305,7 @@
       }
       if (Object.keys(errs).length){
         formErrors=errs;
-        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich,dueAt:dueAtRaw};
+        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlichArr:verantwortlichArr,dueAt:dueAtRaw};
         renderCreateForm();
         var tEl=document.getElementById("f_title"); if (tEl) tEl.focus();
         return;
@@ -1279,12 +1320,24 @@
         notify("Ticket erstellt ✓ (Issue #"+ticket.number+")","ok");
         state.view="list";
       }catch(e){
-        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich,dueAt:dueAtRaw};
+        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlichArr:verantwortlichArr,dueAt:dueAtRaw};
         notify(e.message||"Fehler beim Erstellen des Tickets.","err");
       }
       saving=false; render();
     },
     cancelCreate: function(){ formDraft=null; formErrors={}; state.view="dashboard"; render(); },
+
+    toggleVerantwortlichDropdown: function(){
+      var panel=document.getElementById("verantwortlichPanel");
+      if (panel) panel.classList.toggle("open");
+    },
+    updateVerantwortlichSummary: function(){
+      var panel=document.getElementById("verantwortlichPanel");
+      if (!panel) return;
+      var checked=Array.prototype.slice.call(panel.querySelectorAll("input[type=checkbox]:checked")).map(function(cb){return cb.value;});
+      var summaryEl=document.getElementById("verantwortlichSummary");
+      if (summaryEl) summaryEl.textContent = checked.length ? checked.join(", ") : "Person(en) auswählen";
+    },
 
     changeStatus: async function(id,status){
       if (STATUS_KEYS.indexOf(status)===-1) return;
@@ -1460,10 +1513,16 @@
   document.getElementById("settingsOverlay").addEventListener("click", function(e){
     if (e.target.id==="settingsOverlay") App.closeSettings();
   });
+  document.addEventListener("click", function(e){
+    var panel = document.getElementById("verantwortlichPanel");
+    if (panel && panel.classList.contains("open") && !e.target.closest("#verantwortlichDropdown")){
+      panel.classList.remove("open");
+    }
+  });
   document.addEventListener("keydown", function(e){
     if (e.key==="Enter" && e.target.tagName==="INPUT" && e.target.type!=="password"){
       e.preventDefault();
-      if (e.target.id==="f_title"||e.target.id==="f_ort"||e.target.id==="f_verantwortlich"){ App.submitCreate(); }
+      if (e.target.id==="f_title"||e.target.id==="f_ort"){ App.submitCreate(); }
       if (e.target.id==="su_owner"||e.target.id==="su_repo") { App.saveSetup(); }
     }
     if (e.key==="Enter" && e.target.id==="su_token"){ e.preventDefault(); App.saveSetup(); }
