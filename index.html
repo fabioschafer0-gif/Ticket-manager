@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ObjektPilot Team – Ticket-Verwaltung</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <style>
   :root{
     --bg:#0D1B2A; --surface:#122030; --card:#162840; --border:#1E3A58;
@@ -350,6 +353,7 @@
   var DELETED_LABEL = "geloescht";
   var INPROGRESS_LABEL = "status:in-bearbeitung";
   var AUTO_REFRESH_MS = 30000;
+  var BUILD_VERSION = "2026-06-20 11:23";
 
   var CATEGORIES = {
     reparatur:   { label: "Reparatur",          emoji: "🔧", color: "#EF4444" },
@@ -405,6 +409,23 @@
       if (hrs<24) return "vor "+hrs+" Std.";
       var days=Math.floor(hrs/24);
       return "vor "+days+" Tag"+(days!==1?"en":"");
+    }catch(e){ return ""; }
+  }
+  function isOverdue(t){
+    if (!t || !t.dueAt || t.status==="erledigt") return false;
+    try{
+      var d = new Date(t.dueAt);
+      if (isNaN(d.getTime())) return false;
+      return d.getTime() < Date.now();
+    }catch(e){ return false; }
+  }
+  function toDatetimeLocalValue(iso){
+    if (!iso) return "";
+    try{
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      var pad = function(n){ return (n<10?"0":"")+n; };
+      return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(d.getHours())+":"+pad(d.getMinutes());
     }catch(e){ return ""; }
   }
 
@@ -515,11 +536,12 @@
     return all;
   }
 
-  function buildBody(description, ort, verantwortlich){
+  function buildBody(description, ort, verantwortlich, dueAt){
     var body = (description || "").trim();
     var metaLines = [];
     if (ort) metaLines.push("📍 **Ort:** " + ort);
     if (verantwortlich) metaLines.push("👤 **Verantwortlich:** " + verantwortlich);
+    if (dueAt) metaLines.push("⏰ **Fällig:** " + dueAt);
     if (metaLines.length){
       body += (body ? "\n\n---\n" : "---\n") + metaLines.join("\n");
     }
@@ -537,12 +559,18 @@
       description = body.slice(0, idx).trim();
       meta = body.slice(idx + 5);
     }
-    var ort = "", verantwortlich = "";
+    var ort = "", verantwortlich = "", dueAt = "";
     var ortMatch = meta.match(/📍\s*\*\*Ort:\*\*\s*(.+)/);
     var vMatch = meta.match(/👤\s*\*\*Verantwortlich:\*\*\s*(.+)/);
+    var dueMatch = meta.match(/⏰\s*\*\*Fällig:\*\*\s*(.+)/);
     if (ortMatch) ort = ortMatch[1].trim();
     if (vMatch) verantwortlich = vMatch[1].trim();
-    return { description: description, ort: ort, verantwortlich: verantwortlich };
+    if (dueMatch){
+      var candidate = dueMatch[1].trim();
+      var testDate = new Date(candidate);
+      if (!isNaN(testDate.getTime())) dueAt = candidate;
+    }
+    return { description: description, ort: ort, verantwortlich: verantwortlich, dueAt: dueAt };
   }
 
   function labelNames(issue){
@@ -575,6 +603,7 @@
       description: parsed.description,
       ort: parsed.ort,
       verantwortlich: parsed.verantwortlich,
+      dueAt: parsed.dueAt,
       category: category,
       priority: priority,
       status: status,
@@ -597,7 +626,7 @@
 
   async function createTicketOnGitHub(formData){
     var labels = ["kategorie:" + formData.category, "prioritaet:" + formData.priority];
-    var body = buildBody(formData.description, formData.ort, formData.verantwortlich);
+    var body = buildBody(formData.description, formData.ort, formData.verantwortlich, formData.dueAt);
     var res = await ghRequest("POST", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues", {
       title: formData.title, body: body, labels: labels
     });
@@ -611,6 +640,15 @@
     var state = newStatus === "erledigt" ? "closed" : "open";
     var res = await ghRequest("PATCH", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues/" + ticket.number, {
       state: state, labels: labels
+    });
+    var issue = await res.json();
+    return issueToTicket(issue);
+  }
+
+  async function updateTicketDueDateOnGitHub(ticket, newDueAt){
+    var body = buildBody(ticket.description, ticket.ort, ticket.verantwortlich, newDueAt);
+    var res = await ghRequest("PATCH", "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repo) + "/issues/" + ticket.number, {
+      body: body
     });
     var issue = await res.json();
     return issueToTicket(issue);
@@ -636,13 +674,14 @@
     error: null,
     refreshing: false
   };
-  var filters = { status: "all", category: "all", priority: "all" };
+  var filters = { status: "all", category: "all", priority: "all", overdue: false };
   var searchTerm = "";
   var toastTimer = null;
   var formErrors = {};
   var formDraft = null;
   var saving = false;
   var statusUpdating = {};
+  var dueDateSaving = false;
   var settingsOpen = false;
   var settingsErrors = {};
   var settingsTesting = false;
@@ -650,6 +689,7 @@
   var setupTesting = false;
   var autoRefreshTimer = null;
   var mobileSidebarOpen = false;
+  var knownTicketIds = null;
 
   /* ═══════════════════════════════════════════
      TOAST / ERROR BANNER
@@ -682,7 +722,8 @@
       offen: t.filter(function(x){return x.status==="offen";}).length,
       in_bearbeitung: t.filter(function(x){return x.status==="in_bearbeitung";}).length,
       erledigt: t.filter(function(x){return x.status==="erledigt";}).length,
-      dringend: t.filter(function(x){return x.priority==="dringend" && x.status!=="erledigt";}).length
+      dringend: t.filter(function(x){return x.priority==="dringend" && x.status!=="erledigt";}).length,
+      ueberfaellig: t.filter(isOverdue).length
     };
   }
   function sortedByDateDesc(arr){
@@ -694,6 +735,7 @@
       if (filters.status!=="all" && t.status!==filters.status) return false;
       if (filters.category!=="all" && t.category!==filters.category) return false;
       if (filters.priority!=="all" && t.priority!==filters.priority) return false;
+      if (filters.overdue && !isOverdue(t)) return false;
       if (q){
         var hay=(t.title+" "+(t.description||"")+" "+(t.ort||"")).toLowerCase();
         if (hay.indexOf(q)===-1) return false;
@@ -702,11 +744,29 @@
     }));
   }
   function isFiltered(){
-    return filters.status!=="all"||filters.category!=="all"||filters.priority!=="all"||!!searchTerm;
+    return filters.status!=="all"||filters.category!=="all"||filters.priority!=="all"||filters.overdue||!!searchTerm;
   }
 
   function pillHtml(label, color){
     return '<span class="pill" style="background:'+color+'20;color:'+color+';border:1px solid '+color+'44;">'+escapeHtml(label)+'</span>';
+  }
+
+  function notifButtonHtml(){
+    if (typeof Notification === "undefined"){
+      return '<button class="nav-item" style="padding:8px 0;color:var(--muted);cursor:default;" title="Dieser Browser unterstützt keine Benachrichtigungen">'+
+        '<span class="icon">🔕</span><span>Nicht unterstützt</span></button>';
+    }
+    var perm = Notification.permission;
+    if (perm === "granted"){
+      return '<button class="nav-item" style="padding:8px 0;color:#22C55E;" onclick="App.requestNotificationPermission()" title="Benachrichtigungen sind aktiv">'+
+        '<span class="icon">🔔</span><span>Benachrichtigungen aktiv</span></button>';
+    }
+    if (perm === "denied"){
+      return '<button class="nav-item" style="padding:8px 0;color:var(--muted);" onclick="App.requestNotificationPermission()" title="Im Browser für diese Seite blockiert">'+
+        '<span class="icon">🔕</span><span>Benachrichtigungen blockiert</span></button>';
+    }
+    return '<button class="nav-item" style="padding:8px 0;" onclick="App.requestNotificationPermission()">'+
+      '<span class="icon">🔔</span><span>Benachrichtigungen aktivieren</span></button>';
   }
 
   /* ═══════════════════════════════════════════
@@ -812,8 +872,10 @@
     if (!collapsed){
       html += '<div class="sidebar-footer">';
       html += '<div class="gh-status">🔗 <strong>'+escapeHtml(config?config.owner+"/"+config.repo:"")+'</strong></div>';
+      html += '<div class="gh-status" style="opacity:.6;">📦 Version: '+escapeHtml(BUILD_VERSION)+'</div>';
       html += '<button class="nav-item" style="padding:8px 0;" onclick="App.manualRefresh()">';
       html += '<span class="icon">'+(state.refreshing?'<span class="spin">🔄</span>':'🔄')+'</span><span>Aktualisieren</span></button>';
+      html += notifButtonHtml();
       html += '<button class="nav-item" style="padding:8px 0;" onclick="App.openSettings()"><span class="icon">⚙</span><span>Einstellungen</span></button>';
       html += '</div>';
     }
@@ -843,15 +905,19 @@
     var cat=CATEGORIES[t.category]||CATEGORIES.sonstiges;
     var pri=PRIORITIES[t.priority]||PRIORITIES.mittel;
     var sta=STATUSES[t.status]||STATUSES.offen;
+    var overdue=isOverdue(t);
     var html='<div class="ticket-row" style="border-left:4px solid '+cat.color+';" onclick="App.openDetail(\''+t.id+'\')">';
     html+='<span class="ticket-emoji">'+cat.emoji+'</span><div style="flex:1;min-width:0;">';
     html+='<div class="ticket-title-row"><span class="ticket-title">'+escapeHtml(t.title)+'</span>';
-    html+=pillHtml(sta.label,sta.color)+pillHtml(pri.label,pri.color)+'</div>';
+    html+=pillHtml(sta.label,sta.color)+pillHtml(pri.label,pri.color);
+    if (overdue) html+=pillHtml("⏰ Überfällig","#EF4444");
+    html+='</div>';
     if (t.description){
       var desc=t.description.length>100?t.description.slice(0,100)+"…":t.description;
       html+='<div class="ticket-desc">'+escapeHtml(desc)+'</div>';
     }
     html+='<div class="ticket-meta"><span>📅 '+fmtD(t.createdAt)+'</span>';
+    if (t.dueAt) html+='<span style="'+(overdue?'color:#EF4444;font-weight:700;':'')+'">⏰ Fällig: '+fmtDT(t.dueAt)+'</span>';
     if (t.ort) html+='<span>📍 '+escapeHtml(t.ort)+'</span>';
     if (t.verantwortlich) html+='<span>👤 '+escapeHtml(t.verantwortlich)+'</span>';
     if (t.author) html+='<span>via @'+escapeHtml(t.author)+'</span>';
@@ -877,6 +943,7 @@
     html+=statCardHtml("⚙️","In Bearbeitung",s.in_bearbeitung,"#EAB308","App.filterAndGoList('status','in_bearbeitung')");
     html+=statCardHtml("✅","Erledigt",s.erledigt,"#22C55E","App.filterAndGoList('status','erledigt')");
     html+=statCardHtml("🚨","Dringend",s.dringend,"#EF4444","App.filterAndGoList('priority','dringend')");
+    html+=statCardHtml("⏰","Überfällig",s.ueberfaellig,"#EF4444","App.filterAndGoOverdue()");
     html+='</div>';
 
     html+='<h2 class="section-title">Nach Kategorie</h2><div class="cat-grid">';
@@ -923,6 +990,9 @@
     PRIORITY_KEYS.forEach(function(k){ html+='<option value="'+k+'"'+(filters.priority===k?" selected":"")+'>'+PRIORITIES[k].label+'</option>'; });
     html+='</select>';
 
+    html+='<label style="display:flex;align-items:center;gap:6px;color:var(--soft);font-size:13px;cursor:pointer;padding:0 4px;">';
+    html+='<input type="checkbox" id="overdueFilter" onchange="App.onFilterChange()" '+(filters.overdue?"checked":"")+'> Nur überfällige</label>';
+
     if (isFiltered()) html+='<button class="btn btn-secondary" onclick="App.resetFilters()">✕ Zurücksetzen</button>';
     html+='</div>';
 
@@ -967,6 +1037,11 @@
     html+='<div class="field"><label class="field-label">Verantwortlich</label><input type="text" class="input" id="f_verantwortlich" maxlength="80" placeholder="z.B. Hausmeister, Verwaltung…"></div>';
     html+='</div>';
 
+    html+='<div class="field"><label class="field-label">Fälligkeitsdatum &amp; -uhrzeit (optional)</label>';
+    html+='<input type="datetime-local" class="input'+(formErrors.dueAt?' err':'')+'" id="f_dueAt">';
+    if (formErrors.dueAt) html+='<div class="field-error">⚠ '+escapeHtml(formErrors.dueAt)+'</div>';
+    html+='<div class="field-hint">Wird leer gelassen, wenn keine Fälligkeit benötigt wird.</div></div>';
+
     html+='<div class="info-box">📅 Erstelldatum wird automatisch von GitHub gesetzt: <strong>'+fmtDT(new Date().toISOString())+'</strong></div>';
 
     html+='<div class="form-actions">';
@@ -977,7 +1052,7 @@
     document.getElementById("mainContainer").innerHTML=html;
 
     if (formDraft){
-      ["title","description","category","priority","ort","verantwortlich"].forEach(function(key){
+      ["title","description","category","priority","ort","verantwortlich","dueAt"].forEach(function(key){
         var el=document.getElementById("f_"+key);
         if (el && formDraft[key]!==undefined) el.value=formDraft[key];
       });
@@ -1000,19 +1075,23 @@
     var pri=PRIORITIES[t.priority]||PRIORITIES.mittel;
     var sta=STATUSES[t.status]||STATUSES.offen;
     var busy=!!statusUpdating[t.id];
+    var overdue=isOverdue(t);
 
     var html='<div class="row-between">';
     html+='<button class="btn btn-secondary" onclick="App.goTo(\'list\')">← Zurück zur Liste</button>';
     html+='<button class="btn btn-danger" onclick="App.askDelete(\''+t.id+'\')">🗑 Entfernen</button></div>';
 
     html+='<div class="detail-card"><div class="detail-colorbar" style="background:'+cat.color+';"></div><div class="detail-body">';
-    html+='<div class="detail-badges">'+pillHtml(cat.emoji+" "+cat.label,cat.color)+pillHtml("● "+pri.label,pri.color)+pillHtml(sta.label,sta.color)+'</div>';
+    html+='<div class="detail-badges">'+pillHtml(cat.emoji+" "+cat.label,cat.color)+pillHtml("● "+pri.label,pri.color)+pillHtml(sta.label,sta.color);
+    if (overdue) html+=pillHtml("⏰ Überfällig","#EF4444");
+    html+='</div>';
     html+='<h1 class="detail-title">'+escapeHtml(t.title)+'</h1>';
     if (t.description) html+='<p class="detail-desc">'+escapeHtml(t.description)+'</p>';
 
     html+='<div class="meta-grid">';
     html+='<div class="meta-item"><div class="meta-item-label">📅 Erstellt am</div><div class="meta-item-value">'+fmtDT(t.createdAt)+'</div></div>';
     html+='<div class="meta-item"><div class="meta-item-label">🔄 Zuletzt geändert</div><div class="meta-item-value">'+fmtDT(t.updatedAt)+'</div></div>';
+    if (t.dueAt) html+='<div class="meta-item"><div class="meta-item-label">⏰ Fällig am</div><div class="meta-item-value" style="'+(overdue?'color:#EF4444;':'')+'">'+fmtDT(t.dueAt)+'</div></div>';
     if (t.ort) html+='<div class="meta-item"><div class="meta-item-label">📍 Ort / Bereich</div><div class="meta-item-value">'+escapeHtml(t.ort)+'</div></div>';
     if (t.verantwortlich) html+='<div class="meta-item"><div class="meta-item-label">👤 Verantwortlich</div><div class="meta-item-value">'+escapeHtml(t.verantwortlich)+'</div></div>';
     if (t.author) html+='<div class="meta-item"><div class="meta-item-label">✍️ Erstellt von</div><div class="meta-item-value">@'+escapeHtml(t.author)+'</div></div>';
@@ -1025,6 +1104,14 @@
       html+='<button class="status-btn" style="'+style+'" onclick="App.changeStatus(\''+t.id+'\',\''+k+'\')" '+(busy?'disabled':'')+'>'+(active?"✓ ":"")+v.label+'</button>';
     });
     if (busy) html+='<span class="spin" style="margin-left:6px;">⏳</span>';
+    html+='</div></div>';
+
+    html+='<div class="status-section" style="margin-top:16px;"><div class="status-label">Fälligkeit ändern</div>';
+    html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+    html+='<input type="datetime-local" class="input" id="dueAtEdit" style="max-width:230px;width:auto;" value="'+escapeHtml(toDatetimeLocalValue(t.dueAt))+'" '+(dueDateSaving?'disabled':'')+'>';
+    html+='<button class="btn btn-secondary" onclick="App.saveDueDate(\''+t.id+'\')" '+(dueDateSaving?'disabled':'')+'>Speichern</button>';
+    if (t.dueAt) html+='<button class="btn btn-ghost" onclick="App.clearDueDate(\''+t.id+'\')" '+(dueDateSaving?'disabled':'')+'>Entfernen</button>';
+    if (dueDateSaving) html+='<span class="spin">⏳</span>';
     html+='</div></div>';
 
     if (t.htmlUrl) html+='<div style="margin-top:16px;"><a class="gh-link" href="'+escapeHtml(t.htmlUrl)+'" target="_blank" rel="noopener noreferrer">Auf GitHub öffnen ↗</a></div>';
@@ -1062,12 +1149,45 @@
   /* ═══════════════════════════════════════════
      DATA REFRESH / AUTO-POLL
   ═══════════════════════════════════════════ */
+  function notifyNewTicket(t){
+    var cat = CATEGORIES[t.category] || CATEGORIES.sonstiges;
+    notify("🆕 Neues Ticket: " + t.title, "ok");
+    if (typeof Notification !== "undefined" && Notification.permission === "granted"){
+      try{
+        var n = new Notification("ObjektPilot – Neues Ticket", {
+          body: cat.emoji + " " + t.title + (t.author ? " (von @" + t.author + ")" : ""),
+          tag: "objektpilot-ticket-" + t.id
+        });
+        n.onclick = function(){ window.focus(); n.close(); };
+      }catch(e){ /* Benachrichtigung fehlgeschlagen – nicht kritisch, App läuft normal weiter */ }
+    }
+  }
+  function notifyNewTicketsBatch(count){
+    notify("🆕 " + count + " neue Tickets erstellt", "ok");
+    if (typeof Notification !== "undefined" && Notification.permission === "granted"){
+      try{
+        var n = new Notification("ObjektPilot", { body: count + " neue Tickets wurden erstellt." });
+        n.onclick = function(){ window.focus(); n.close(); };
+      }catch(e){ /* ignorieren */ }
+    }
+  }
+
   async function refreshTickets(silent){
     if (state.refreshing) return;
     state.refreshing = true;
     if (!silent) render();
     try{
       var tickets = await fetchTicketsFromGitHub();
+
+      if (knownTicketIds){
+        var newOnes = tickets.filter(function(t){ return !knownTicketIds[t.id]; });
+        if (newOnes.length === 1) notifyNewTicket(newOnes[0]);
+        else if (newOnes.length > 1) notifyNewTicketsBatch(newOnes.length);
+      }
+      var nextKnown = {};
+      tickets.forEach(function(t){ nextKnown[t.id] = true; });
+      knownTicketIds = nextKnown;
+
       state.tickets = tickets;
       state.error = null;
     }catch(e){
@@ -1105,17 +1225,23 @@
     closeMobileSidebar: function(){ mobileSidebarOpen=false; render(); },
 
     filterAndGoList: function(key,value){
-      filters={status:"all",category:"all",priority:"all"};
-      filters[key]=value; searchTerm=""; state.view="list"; render();
+      filters={status:"all",category:"all",priority:"all",overdue:false};
+      filters[key]=value; searchTerm=""; state.view="list"; mobileSidebarOpen=false; render();
+    },
+    filterAndGoOverdue: function(){
+      filters={status:"all",category:"all",priority:"all",overdue:true};
+      searchTerm=""; state.view="list"; mobileSidebarOpen=false; render();
     },
     onFilterChange: function(){
       var sEl=document.getElementById("searchInput"), stEl=document.getElementById("statusFilter"),
-          catEl=document.getElementById("categoryFilter"), priEl=document.getElementById("priorityFilter");
+          catEl=document.getElementById("categoryFilter"), priEl=document.getElementById("priorityFilter"),
+          ovEl=document.getElementById("overdueFilter");
       searchTerm=sEl?sEl.value:""; filters.status=stEl?stEl.value:"all";
       filters.category=catEl?catEl.value:"all"; filters.priority=priEl?priEl.value:"all";
+      filters.overdue=ovEl?ovEl.checked:false;
       renderTicketListBody();
     },
-    resetFilters: function(){ filters={status:"all",category:"all",priority:"all"}; searchTerm=""; render(); },
+    resetFilters: function(){ filters={status:"all",category:"all",priority:"all",overdue:false}; searchTerm=""; render(); },
 
     openDetail: function(id){ state.activeId=id; state.view="detail"; render(); },
 
@@ -1126,12 +1252,19 @@
       var priority=document.getElementById("f_priority").value;
       var ort=(document.getElementById("f_ort").value||"").trim();
       var verantwortlich=(document.getElementById("f_verantwortlich").value||"").trim();
+      var dueAtRaw=(document.getElementById("f_dueAt").value||"").trim();
 
       var errs={};
       if (!title||title.length<3) errs.title="Mindestens 3 Zeichen erforderlich";
+      var dueAtIso="";
+      if (dueAtRaw){
+        var dueAtDate=new Date(dueAtRaw);
+        if (isNaN(dueAtDate.getTime())) errs.dueAt="Ungültiges Datum";
+        else dueAtIso=dueAtDate.toISOString();
+      }
       if (Object.keys(errs).length){
         formErrors=errs;
-        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich};
+        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich,dueAt:dueAtRaw};
         renderCreateForm();
         var tEl=document.getElementById("f_title"); if (tEl) tEl.focus();
         return;
@@ -1139,13 +1272,14 @@
 
       saving=true; renderCreateForm();
       try{
-        var ticket = await createTicketOnGitHub({title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich});
+        var ticket = await createTicketOnGitHub({title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich,dueAt:dueAtIso});
         state.tickets=[ticket].concat(state.tickets);
+        if (knownTicketIds) knownTicketIds[ticket.id]=true;
         formDraft=null; formErrors={};
         notify("Ticket erstellt ✓ (Issue #"+ticket.number+")","ok");
         state.view="list";
       }catch(e){
-        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich};
+        formDraft={title:title,description:description,category:category,priority:priority,ort:ort,verantwortlich:verantwortlich,dueAt:dueAtRaw};
         notify(e.message||"Fehler beim Erstellen des Tickets.","err");
       }
       saving=false; render();
@@ -1169,6 +1303,46 @@
       render();
     },
 
+    saveDueDate: async function(id){
+      if (dueDateSaving) return;
+      var ticket=state.tickets.find(function(t){return t.id===id;});
+      if (!ticket) return;
+      var input=document.getElementById("dueAtEdit");
+      var raw=input?input.value.trim():"";
+      var iso="";
+      if (raw){
+        var d=new Date(raw);
+        if (isNaN(d.getTime())){
+          notify("Ungültiges Datum.","err");
+          return;
+        }
+        iso=d.toISOString();
+      }
+      dueDateSaving=true; render();
+      try{
+        var updated=await updateTicketDueDateOnGitHub(ticket,iso);
+        state.tickets=state.tickets.map(function(t){ return t.id===updated.id?updated:t; });
+        notify(iso?"Fälligkeit aktualisiert ✓":"Fälligkeit entfernt ✓","ok");
+      }catch(e){
+        notify(e.message||"Fehler beim Speichern der Fälligkeit.","err");
+      }
+      dueDateSaving=false; render();
+    },
+    clearDueDate: async function(id){
+      if (dueDateSaving) return;
+      var ticket=state.tickets.find(function(t){return t.id===id;});
+      if (!ticket) return;
+      dueDateSaving=true; render();
+      try{
+        var updated=await updateTicketDueDateOnGitHub(ticket,"");
+        state.tickets=state.tickets.map(function(t){ return t.id===updated.id?updated:t; });
+        notify("Fälligkeit entfernt ✓","ok");
+      }catch(e){
+        notify(e.message||"Fehler beim Entfernen der Fälligkeit.","err");
+      }
+      dueDateSaving=false; render();
+    },
+
     askDelete: function(id){ state.confirmId=id; render(); },
     cancelDelete: function(){ state.confirmId=null; render(); },
     confirmDelete: async function(){
@@ -1190,6 +1364,33 @@
 
     manualRefresh: function(){ mobileSidebarOpen=false; refreshTickets(false); },
     dismissError: function(){ state.error=null; render(); },
+
+    requestNotificationPermission: async function(){
+      if (typeof Notification === "undefined"){
+        notify("Benachrichtigungen werden von diesem Browser nicht unterstützt.","err");
+        return;
+      }
+      if (Notification.permission === "granted"){
+        notify("Benachrichtigungen sind bereits aktiv.","ok");
+        return;
+      }
+      if (Notification.permission === "denied"){
+        notify("Benachrichtigungen sind für diese Seite blockiert. Bitte in den Browser-Einstellungen manuell erlauben.","err");
+        return;
+      }
+      try{
+        var perm = await Notification.requestPermission();
+        if (perm === "granted"){
+          notify("Benachrichtigungen aktiviert ✓","ok");
+          try{ new Notification("ObjektPilot", { body: "Du wirst jetzt über neue Tickets benachrichtigt." }); }catch(e){}
+        } else {
+          notify("Benachrichtigungen wurden nicht erlaubt.","err");
+        }
+      }catch(e){
+        notify("Fehler beim Aktivieren der Benachrichtigungen.","err");
+      }
+      render();
+    },
 
     openSettings: function(){ settingsOpen=true; settingsErrors={}; mobileSidebarOpen=false; render(); },
     closeSettings: function(){ settingsOpen=false; render(); },
@@ -1274,6 +1475,8 @@
   async function initialLoad(){
     try{
       state.tickets = await fetchTicketsFromGitHub();
+      knownTicketIds = {};
+      state.tickets.forEach(function(t){ knownTicketIds[t.id] = true; });
       state.error = null;
     }catch(e){
       state.error = e.message || "Fehler beim Laden der Tickets.";
