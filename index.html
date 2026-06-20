@@ -330,7 +330,10 @@
   <header id="mobileHeader">
     <button onclick="App.toggleMobileSidebar()" aria-label="Menü öffnen">☰</button>
     <div class="mh-title" onclick="App.goTo('dashboard')">Objekt<span>Pilot</span></div>
-    <button id="mobileRefreshBtn" onclick="App.manualRefresh()" aria-label="Aktualisieren">🔄</button>
+    <div style="display:flex;align-items:center;">
+      <button id="mobileRefreshBtn" onclick="App.manualRefresh()" aria-label="Aktualisieren">🔄</button>
+      <button onclick="App.openSettings()" aria-label="Einstellungen">⚙</button>
+    </div>
   </header>
   <nav class="sidebar" id="sidebar"></nav>
   <main>
@@ -370,7 +373,7 @@
   var DELETED_LABEL = "geloescht";
   var INPROGRESS_LABEL = "status:in-bearbeitung";
   var AUTO_REFRESH_MS = 30000;
-  var BUILD_VERSION = "2026-06-20 12:02";
+  var BUILD_VERSION = "2026-06-20 12:11";
 
   var CATEGORIES = {
     reparatur:   { label: "Reparatur",          emoji: "🔧", color: "#EF4444" },
